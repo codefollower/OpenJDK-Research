@@ -4,12 +4,11 @@
 先确认gcc、gdb、make这些命令是否可用，<br>
 如果系统提示找不到这些命令，你需要先装好这些工具，这里就不介绍怎么安装这些工具了。<br>
 
-用Git clone源代码<br>
+用Git clone源代码，假设顶层目录是 /home/zhh/openjdk (请根据你的实际情况调整这个目录名)<br>
     ```
-git clone https://github.com/codefollower/OpenJDK-Research.git
+git clone https://github.com/codefollower/OpenJDK-Research.git /home/zhh/openjdk
     ```
 <br>
-假设你把HotSpot源代码放到了/home/zhh/openjdk目录(请根据你的实际情况调整这个目录名）<br>
 
 构建HotSpot需要事先安装一个JDK，JDK1.6/1.7都可以，<br>
 然后配置环境变量JAVA_HOME指向JDK的安装目录，<br>

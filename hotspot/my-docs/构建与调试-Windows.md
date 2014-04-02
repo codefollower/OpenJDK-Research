@@ -18,12 +18,10 @@ D:\VS2010 <br>
 
 ## 下载源代码
 
-用Git clone源代码<br>
+用Git clone源代码，假设顶层目录是 D:\openjdk (请根据你的实际情况调整这个目录名)<br>
     ```
-git clone https://github.com/codefollower/OpenJDK-Research.git
+git clone https://github.com/codefollower/OpenJDK-Research.git D:\openjdk
     ```
-<br>
-假设顶层目录是 D:\openjdk (请根据你的实际情况调整这个目录名）<br>
 
 ## 生成Visual Studio项目
 
