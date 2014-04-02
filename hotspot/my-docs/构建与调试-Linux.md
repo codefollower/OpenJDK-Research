@@ -6,21 +6,21 @@
 
 用Git clone源代码<br>
     ```
-git clone https://github.com/codefollower/HotSpot-Research.git
+git clone https://github.com/codefollower/OpenJDK-Research.git
     ```
 <br>
-假设你把HotSpot源代码放到了/home/zhh/hotspot目录(请根据你的实际情况调整这个目录名）<br>
+假设你把HotSpot源代码放到了/home/zhh/openjdk目录(请根据你的实际情况调整这个目录名）<br>
 
 构建HotSpot需要事先安装一个JDK，JDK1.6/1.7都可以，<br>
 然后配置环境变量JAVA_HOME指向JDK的安装目录，<br>
-接着切换到/home/zhh/hotspot/make目录，运行下面的命令:<br>
+接着切换到/home/zhh/openjdk/hotspot/make目录，运行下面的命令:<br>
     ```
 make jvmg ALT_BOOTDIR=$JAVA_HOME ALT_JDK_IMPORT_PATH=$JAVA_HOME ARCH_DATA_MODEL=64 LANG=C SKIP_FASTDEBUG_BUILD=false
     ```
 <br>
 第一次构建通常要花20到30分钟，<br>
-构建好的文件都在/home/zhh/hotspot/build/linux/linux_amd64_compiler2目录里，<br>
-切换到/home/zhh/hotspot/build/linux/linux_amd64_compiler2/jvmg目录运行下面的命令:<br>
+构建好的文件都在/home/zhh/openjdk/hotspot/build/linux/linux_amd64_compiler2目录里，<br>
+切换到/home/zhh/openjdk/hotspot/build/linux/linux_amd64_compiler2/jvmg目录运行下面的命令:<br>
     ```
 gamma -version
     ```
@@ -32,7 +32,7 @@ OpenJDK 64-Bit Server VM (build 24.0-b56-internal-jvmg, mixed mode)
 
 <strong>
 <br>
-注意在调试前记得把/home/zhh/hotspot/build/linux/linux_amd64_compiler2/jvmg/libjvm.diz文件中的内容 <br>
+注意在调试前记得把/home/zhh/openjdk/hotspot/build/linux/linux_amd64_compiler2/jvmg/libjvm.diz文件中的内容 <br>
 解压出来放到与它平级的目录中，否则无法在一些文件中打断点。
 </strong>
 
@@ -59,20 +59,20 @@ $JAVA_HOME/bin/java （注：把$JAVA_HOME换成你的实际目录名）
 
 <br>
 打开eclipse后，选择File -> Import -> Existing Code as Makefile Project <br>
-按next，Project Name设为hotspot，Existing Code Location是/home/zhh/hotspot <br>
+按next，Project Name设为hotspot，Existing Code Location是/home/zhh/openjdk/hotspot <br>
 Toolchain那里选Linux GCC，然后按Finish。<br><br>
 
 接着在eclipse左边的Project Explorer中右击hotspot项目，<br>
 选择Debug As -> Debug Configurations，<br>
 双击左边的C/C++ Application, 会在下方生成hotspot子项，<br>
 点一下hotspot子项，<br>
-在右边的Main -> C/C++ Application中填入/home/zhh/hotspot/build/linux/linux_amd64_compiler2/jvmg/gamma <br>
+在右边的Main -> C/C++ Application中填入/home/zhh/openjdk/hotspot/build/linux/linux_amd64_compiler2/jvmg/gamma <br>
 在Arguments -> Program arguments中输入<br>
--cp /home/zhh/hotspot/build/linux/linux_amd64_compiler2/jvmg Queens <br>
+-cp /home/zhh/openjdk/hotspot/build/linux/linux_amd64_compiler2/jvmg Queens <br>
 上面的gamma就相当于java命令，Queens是hotspot项目中自带的一个Java测试例子，<br>
 然后在Environment那里增加两个环境变量<br>
 JAVA_HOME 指向之前安装的jdk的目录<br>
-LD_LIBRARY_PATH 是/home/zhh/hotspot/build/linux/linux_amd64_compiler2/jvmg<br><br>
+LD_LIBRARY_PATH 是/home/zhh/openjdk/hotspot/build/linux/linux_amd64_compiler2/jvmg<br><br>
 
 然后点Apply和Close按钮。<br>
 

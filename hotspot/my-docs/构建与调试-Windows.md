@@ -20,25 +20,25 @@ D:\VS2010 <br>
 
 用Git clone源代码<br>
     ```
-git clone https://github.com/codefollower/HotSpot-Research.git
+git clone https://github.com/codefollower/OpenJDK-Research.git
     ```
 <br>
-假设顶层目录是 D:\hotspot (请根据你的实际情况调整这个目录名）<br>
+假设顶层目录是 D:\openjdk (请根据你的实际情况调整这个目录名）<br>
 
 ## 生成Visual Studio项目
 
-打开一个命令行窗口，切换到D:\hotspot\make\windows目录，运行下面的命令:<br>
+打开一个命令行窗口，切换到D:\openjdk\hotspot\make\windows目录，运行下面的命令:<br>
 
 D:\VS2010\Common7\Tools\vsvars32.bat <br>
 set HOTSPOTMKSHOME=D:\Cygwin\bin <br>
-create D:\JavaSE1.7 <br>
+create D:\JavaSE1.7 (注: create对应当前目当下的create.bat文件)<br>
 
-会在D:\hotspot\build\vs-i486目录中生成Visual Studio项目文件
+会在D:\openjdk\hotspot\build\vs-i486目录中生成Visual Studio项目文件
 
 ## 导入项目
 
 运行Microsoft Visual Studio 2010，
-按Ctrl + Shift + O，打开D:\hotspot\build\vs-i486\jvm.vcxproj，
+按Ctrl + Shift + O，打开D:\openjdk\hotspot\build\vs-i486\jvm.vcxproj，
 然后右击左边的jvm项目名，选择Build就可以构建jvm了。
 
 ## 调试JVM
