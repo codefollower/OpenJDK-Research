@@ -9,8 +9,12 @@ AllocatedObj
 	ReallocMark
 	ResourceMark 在share\vm\memory\resourceArea.hpp
   ResourceObj
+
+enum MemoryType
   
 _ValueObj
   ArrayAllocator
+
+MetaspaceObj
 
 AllStatic
