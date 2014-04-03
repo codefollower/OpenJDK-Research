@@ -18,3 +18,4 @@ _ValueObj
 MetaspaceObj
 
 AllStatic
+  它的子类的方法都是static，并且没有构造函数
