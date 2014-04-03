@@ -1061,7 +1061,7 @@ JVM_IsSameClassPackage(JNIEnv *env, jclass class1, jclass class2);
 #define JVM_ACC_ENUM_BIT          14
 
 // NOTE: replicated in SA in vm/agent/sun/jvm/hotspot/utilities/ConstantTag.java
-enum {
+enum { //×Ü¹²14¸ötag
     JVM_CONSTANT_Utf8 = 1,
     JVM_CONSTANT_Unicode,               /* unused */
     JVM_CONSTANT_Integer,

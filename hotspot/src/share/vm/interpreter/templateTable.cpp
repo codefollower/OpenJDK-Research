@@ -196,6 +196,8 @@ void TemplateTable::def(Bytecodes::Code code, int flags, TosState in, TosState o
   // extra set of 5 dispatch tables for the wide instructions - for simplicity
   // they all go with one table)
   assert(in == vtos || !is_wide, "wide instructions have vtos entry point only");
+  //TemplateTable::_template_table有234个Template，最开始时里面的Template都只有默认值，
+  //这里会把code值当成_template_table数组的索引，得到对应的Template后再进行初始化
   Template* t = is_wide ? template_for_wide(code) : template_for(code);
   // setup entry
   t->initialize(flags, in, out, gen, arg);

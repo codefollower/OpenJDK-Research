@@ -108,7 +108,7 @@ jint init_globals() {
   invocationCounter_init();  // before any methods loaded
   marksweep_init();
   accessFlags_init();
-  templateTable_init();
+  templateTable_init(); //调用interpreter_init()时，已触发TemplateTable::initialize()
   InterfaceSupport_init();
   SharedRuntime::generate_stubs();
   universe2_init();  // dependent on codeCache_init and stubRoutines_init1

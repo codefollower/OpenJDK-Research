@@ -154,6 +154,11 @@ void Arguments::process_sun_java_launcher_properties(JavaVMInitArgs* args) {
   // See if sun.java.launcher or sun.java.launcher.pid is defined.
   // Must do this before setting up other system properties,
   // as some of them may depend on launcher type.
+  //一些参数例子:
+  //-Djava.class.path=.
+  //-Dsun.java.command=Test
+  //-Dsun.java.launcher=gamma
+  //-Dsun.java.launcher.pid=8396 (linux有这个参数，windows没有)
   for (int index = 0; index < args->nOptions; index++) {
     const JavaVMOption* option = args->options + index;
     const char* tail;

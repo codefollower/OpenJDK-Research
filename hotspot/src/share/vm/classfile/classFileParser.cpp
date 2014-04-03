@@ -119,6 +119,9 @@ void ClassFileParser::parse_constant_pool_entries(int length, TRAPS) {
     // so we don't need bounds-check for reading tag.
     u1 tag = cfs->get_u1_fast();
     switch (tag) {
+		//总共14个tag，
+		//除了MethodHandle、MethodType、InvokeDynamic
+		//基本上按〈jvm规范7〉中的小节顺序来定case的先后
       case JVM_CONSTANT_Class :
         {
           cfs->guarantee_more(3, CHECK);  // name_index, tag/access_flags
@@ -338,6 +341,8 @@ constantPoolHandle ClassFileParser::parse_constant_pool(TRAPS) {
   int index = 1;  // declared outside of loops for portability
 
   // first verification pass - validate cross references and fixup class and string constants
+  //检查常量池索引指向的类型是否正确，
+  //比如JVM_CONSTANT_Fieldref的class_index必须是JVM_CONSTANT_Class
   for (index = 1; index < length; index++) {          // Index 0 is unused
     jbyte tag = cp->tag_at(index).value();
     switch (tag) {

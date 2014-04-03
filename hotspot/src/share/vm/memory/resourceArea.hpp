@@ -81,7 +81,7 @@ class ResourceMark: public StackObj {
 protected:
   ResourceArea *_area;          // Resource area to stack allocate
   Chunk *_chunk;                // saved arena chunk
-  char *_hwm, *_max;
+  char *_hwm, *_max; //hwmÊÇHigh water markµÄËõĞ´£¬¼ûArena::_hwm
   size_t _size_in_bytes;
 #ifdef ASSERT
   Thread* _thread;
