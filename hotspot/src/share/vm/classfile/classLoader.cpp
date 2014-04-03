@@ -350,7 +350,9 @@ void ClassLoader::setup_meta_index() {
   // Set up meta index which allows us to open boot jars lazily if
   // class data sharing is enabled
   const char* known_version = "% VERSION 2";
+  //D:\JavaSE1.8\jre\lib\meta-index文件
   char* meta_index_path = Arguments::get_meta_index_path();
+  //D:\JavaSE1.8\jre\lib\目录
   char* meta_index_dir  = Arguments::get_meta_index_dir();
   FILE* file = fopen(meta_index_path, "r");
   int line_no = 0;
@@ -797,6 +799,8 @@ void ClassLoader::copy_package_info_table(char** top, char* end) {
 
 
 PackageInfo* ClassLoader::lookup_package(const char *pkgname) {
+  //当pkgname="java/lang/Object.class"时，cp="/Object.class"
+  //strrchr函数在string.h中
   const char *cp = strrchr(pkgname, '/');
   if (cp != NULL) {
     // Package prefix found
@@ -833,6 +837,7 @@ bool ClassLoader::add_package(const char *pkgname, int classpath_index, TRAPS) {
 
       memcpy(new_pkgname, pkgname, n);
       new_pkgname[n] = '\0';
+	  //当pkgname="java/lang/Object.class"时，new_pkgname="java/lang/"
       pp = _package_hash_table->new_entry(new_pkgname, n);
       pp->set_index(classpath_index);
 
