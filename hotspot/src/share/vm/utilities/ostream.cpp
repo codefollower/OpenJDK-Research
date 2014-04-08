@@ -1061,6 +1061,9 @@ void ttyLocker::break_tty_lock_for_safepoint(intx holder) {
 
 void ostream_init() {
   if (defaultStream::instance == NULL) {
+	//会先调用share\vm\memory\allocation.cpp的
+	//ResourceObj::operator new(size_t size, allocation_type type, MEMFLAGS flags)
+	//TODO size参数是怎么传过去的？这里没有传啊
     defaultStream::instance = new(ResourceObj::C_HEAP, mtInternal) defaultStream();
     tty = defaultStream::instance;
 

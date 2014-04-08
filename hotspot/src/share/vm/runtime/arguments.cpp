@@ -136,6 +136,9 @@ static bool match_option(const JavaVMOption *option, const char* name,
                          const char** tail) {
   int len = (int)strlen(name);
   if (strncmp(option->optionString, name, len) == 0) {
+    //如果name是"-Dsun.java.launcher="，
+    //option是"-Dsun.java.launcher=gamma"
+    //那么tail就是"gamma"
     *tail = option->optionString + len;
     return true;
   } else {
@@ -161,7 +164,7 @@ void Arguments::process_sun_java_launcher_properties(JavaVMInitArgs* args) {
   //-Dsun.java.launcher.pid=8396 (linux有这个参数，windows没有)
   for (int index = 0; index < args->nOptions; index++) {
     const JavaVMOption* option = args->options + index;
-    const char* tail;
+    const char* tail; //存放等号后面的值
 
     if (match_option(option, "-Dsun.java.launcher=", &tail)) {
       process_java_launcher_argument(tail, option->extraInfo);
@@ -1803,7 +1806,7 @@ void Arguments::process_java_compiler_argument(char* arg) {
   }
 }
 
-void Arguments::process_java_launcher_argument(const char* launcher, void* extra_info) {
+void Arguments::process_java_launcher_argument(const char* launcher, void* extra_info) { //未使用extra_info
   _sun_java_launcher = strdup(launcher);
   if (strcmp("gamma", _sun_java_launcher) == 0) {
     _created_by_gamma_launcher = true;

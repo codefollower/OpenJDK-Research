@@ -3853,7 +3853,7 @@ void nx_check_protection() {
 
 // this is called _before_ the global arguments have been parsed
 void os::init(void) {
-  _initial_pid = _getpid();
+  _initial_pid = _getpid(); //在%VS_HOME%\VC\include\process.h中定义_getpid
 
   init_random(1234567);
 
