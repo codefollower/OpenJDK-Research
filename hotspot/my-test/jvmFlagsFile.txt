@@ -1,0 +1,14 @@
+#-XX:+PrintFlagsWithComments -agentlib:hprof -XX:-DumpSharedSpaces -XX:-VerifyDuringStartup -XXaltjvm=$(TargetDir) -Dsun.java.launcher=gamma -cp E:\openjdk\git\hotspot\my-test Test
+
+
+#-XX:+PrintFlagsWithComments
+#-agentlib:hprof
+#-XX:-DumpSharedSpaces
+#-XX:-VerifyDuringStartup
+#-XXaltjvm=$(TargetDir)
+#-Dsun.java.launcher=gamma
+#-cp
+#E:\openjdk\git\hotspot\my-test
+#Test
+
++AlwaysTenure
