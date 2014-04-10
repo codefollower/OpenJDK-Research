@@ -2581,6 +2581,8 @@ jint Arguments::parse_each_vm_init_arg(const JavaVMInitArgs* args,
       *scp_assembly_required_p = true;
     // -Xrun
     } else if (match_option(option, "-Xrun", &tail)) {
+      //例如-Xrunhprof:help，最后得到的name是hprof，options是help
+      //等价于-agentlib:hprof=help
       if (tail != NULL) {
         const char* pos = strchr(tail, ':');
         size_t len = (pos == NULL) ? strlen(tail) : pos - tail;
