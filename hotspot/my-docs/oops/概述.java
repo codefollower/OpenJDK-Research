@@ -2,6 +2,8 @@
 
 oopDesc类继承关系
 ----------------------
+    jdk7
+	----
 	typedef class oopDesc*                            oop;
 	typedef class   instanceOopDesc*            instanceOop;
 	typedef class   methodOopDesc*                    methodOop;
@@ -16,8 +18,18 @@ oopDesc类继承关系
 	typedef class   markOopDesc*                    markOop;
 	typedef class   compiledICHolderOopDesc*    compiledICHolderOop;
 
+	jdk8
+	----
+	typedef class oopDesc*                            oop;
+	typedef class   instanceOopDesc*            instanceOop;
+	typedef class   arrayOopDesc*                    arrayOop;
+	typedef class     objArrayOopDesc*            objArrayOop;
+	typedef class     typeArrayOopDesc*            typeArrayOop;
+
 Klass类继承关系
 ----------------------
+	jdk7
+	----
 	class Klass;
 	class   instanceKlass;
 	class     instanceMirrorKlass;
@@ -36,6 +48,17 @@ Klass类继承关系
 	class   constantPoolKlass;
 	class   constantPoolCacheKlass;
 	class   compiledICHolderKlass;
+
+	jdk8
+	----
+	class Klass;
+	class   InstanceKlass;
+	class     InstanceMirrorKlass;
+	class     InstanceClassLoaderKlass;
+	class     InstanceRefKlass;
+	class   ArrayKlass;
+	class     ObjArrayKlass;
+	class     TypeArrayKlass;
 
 在share\vm\classfile\classFileParser.cpp -> parseClassFile中解析class文件，
 然后得到instanceKlassHandle，而instanceKlassHandle内部有instanceKlass，
