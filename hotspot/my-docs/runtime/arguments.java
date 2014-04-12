@@ -32,6 +32,11 @@ SysClassPath如:
 ==================
 D:\JavaSE1.8\jre\lib\resources.jar;D:\JavaSE1.8\jre\lib\rt.jar;D:\JavaSE1.8\jre\lib\sunrsasign.jar;D:\JavaSE1.8\jre\lib\jsse.jar;D:\JavaSE1.8\jre\lib\jce.jar;D:\JavaSE1.8\jre\lib\charsets.jar;D:\JavaSE1.8\jre\lib\jfr.jar;D:\JavaSE1.8\jre\classes
 
+-XX:NativeMemoryTracking=detail -verbose:gc  -XX:-DumpSharedSpaces -XX:-VerifyDuringStartup -XXaltjvm=$(TargetDir) -Dsun.java.launcher=gamma -cp E:\openjdk\git\hotspot\my-test Test
+
+-XX:NativeMemoryTracking=detail -verbose:gc  -XX:-DumpSharedSpaces -XX:-VerifyDuringStartup -XXaltjvm=$(TargetDir) -Dsun.java.launcher=gamma -cp E:\openjdk\java8-tutorial\src Test
+
+
 加 -XX:+PrintFlagsInitial
 ==================================(在share\vm\runtime\globals.hpp定义)
 	[Global flags]

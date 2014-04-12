@@ -130,7 +130,7 @@ static jint data_dump(AttachOperation* op, outputStream* out) {
 // Implementation of "threaddump" command - essentially a remote ctrl-break
 // See also: ThreadDumpDCmd class
 //
-static jint thread_dump(AttachOperation* op, outputStream* out) {
+static jint thread_dump(AttachOperation* op, outputStream* out) { //在命令行窗口运行jstack <pid>可调试这个方法
   bool print_concurrent_locks = false;
   if (op->arg(0) != NULL && strcmp(op->arg(0), "-l") == 0) {
     print_concurrent_locks = true;
