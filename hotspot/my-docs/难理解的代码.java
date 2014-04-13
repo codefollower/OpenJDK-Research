@@ -29,4 +29,22 @@
   _begin_vm_creation_time =
             PerfDataManager::create_variable(SUN_RT, "createVmBeginTime",
                                              PerfData::U_None, __the_thread__); 
-											 if ((((ThreadShadow*)__the_thread__)->has_pending_exception())) return ; (void)(0);											
+											 if ((((ThreadShadow*)__the_thread__)->has_pending_exception())) return ; (void)(0);
+											 
+
+
+- share\vm\runtime\perfData.cpp
+
+    //调用create_entry方法
+	PerfLong::PerfLong(CounterNS ns, const char* namep, Units u, Variability v)
+					 : PerfData(ns, namep, u, v) {
+
+	  create_entry(T_LONG, sizeof(jlong)); //为什么少一个参数呢
+	}
+
+    //create_entry方法定义中vlen不是默认值
+    void PerfData::create_entry(BasicType dtype, size_t dsize, size_t vlen)
+
+	//但是create_entry方法的声明处是有默认值的，
+	//所以在用vs看代码时如果迷惑了，要记得转到声明处看看。
+    void create_entry(BasicType dtype, size_t dsize, size_t dlen = 0);
