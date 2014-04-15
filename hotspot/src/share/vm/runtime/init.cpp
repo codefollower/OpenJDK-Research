@@ -97,7 +97,7 @@ jint init_globals() {
   classLoader_init();
   codeCache_init();
   VM_Version_init();
-  os_init_globals();
+  os_init_globals(); //内部没做什么事
   stubRoutines_init1();
   jint status = universe_init();  // dependent on codeCache_init and
                                   // stubRoutines_init1 and metaspace_init.
@@ -133,6 +133,8 @@ jint init_globals() {
 
   // All the flags that get adjusted by VM_Version_init and os::init_2
   // have been set so dump the flags now.
+  //对应-XX:+PrintFlagsFinal，与-XX:+PrintFlagsWithComments类似，
+  //后者调用printFlags时第二个参数是true，并且在share\vm\runtime\arguments.cpp的parse中就调用了，然后vm马上退出
   if (PrintFlagsFinal) {
     CommandLineFlags::printFlags(tty, false);
   }
