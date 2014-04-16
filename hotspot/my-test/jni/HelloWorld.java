@@ -11,7 +11,6 @@
 //gcc -fPIC -I$JAVA_HOME/include -I$JAVA_HOME/include/linux -shared -o libHelloWorld.so HelloWorld.c
 
 //windows:
-//cl -I D:\JavaSE1.8\include -I D:\JavaSE1.8\include\win32 -LD HelloWorld.c -FeHelloWorld.dll
 //cl -I %JAVA_HOME%\include -I %JAVA_HOME%\include\win32 -LD HelloWorld.c -FeHelloWorld.dll
 
 //4. 最后运行:
