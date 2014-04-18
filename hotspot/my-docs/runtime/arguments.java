@@ -37,6 +37,18 @@ D:\JavaSE1.8\jre\lib\resources.jar;D:\JavaSE1.8\jre\lib\rt.jar;D:\JavaSE1.8\jre\
 //加-XX:+PrintMallocFree会出现错误：Internal Error at mutex.cpp:454
 -XX:+PrintMallocFree -XX:NativeMemoryTracking=detail -verbose:gc  -XX:-DumpSharedSpaces -XX:-VerifyDuringStartup -XXaltjvm=$(TargetDir) -Dsun.java.launcher=gamma -cp E:\openjdk\git\hotspot\my-test Test
 
+-XX:NativeMemoryTracking=detail -verbose:gc  -XX:-DumpSharedSpaces -XX:-VerifyDuringStartup -XXaltjvm=$(TargetDir) -Dsun.java.launcher=gamma -cp E:\openjdk\git\hotspot\my-test Test
+
+-XX:NativeMemoryTracking=detail -verbose:gc  -XX:-DumpSharedSpaces -XX:-VerifyDuringStartup -XXaltjvm=$(TargetDir) -Dsun.java.launcher=gamma -cp E:\openjdk\git\hotspot\my-test\jni\corejava7-v2-ch11\Printf3Test -Djava.library.path=E:\openjdk\git\hotspot\my-test\jni\corejava7-v2-ch11\Printf3Test Printf3Test
+
+-XX:+TraceJNICalls -XX:NativeMemoryTracking=detail -verbose:gc  -XX:-DumpSharedSpaces -XX:-VerifyDuringStartup -XXaltjvm=$(TargetDir) -Dsun.java.launcher=gamma -cp E:\openjdk\git\hotspot\my-test\jni\corejava7-v2-ch11\Printf3Test -Djava.library.path=E:\openjdk\git\hotspot\my-test\jni\corejava7-v2-ch11\Printf3Test Printf3Test
+
+-XXaltjvm=$(TargetDir) -Dsun.java.launcher=gamma -Djava.library.path=E:\openjdk\git\hotspot\my-test\jvmti\jdk-demo\versionCheck -agentlib:myagent=help -version 
+
+-XXaltjvm=$(TargetDir) -Dsun.java.launcher=gamma -agentlib:myagent=help -version
+
+
+
 加 -XX:+PrintFlagsInitial
 ==================================(在share\vm\runtime\globals.hpp定义)
 	[Global flags]
