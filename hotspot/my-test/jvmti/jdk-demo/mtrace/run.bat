@@ -1,14 +1,28 @@
 @echo off
 
 javac -encoding UTF-8 *.java
-rem javah -encoding UTF-8 Mtrace
+jar -cvf myagent.jar *.class
 
-cl /O1 /MD /D _STATIC_CPPLIB /c -I. -I ..\agent_util -I ..\java_crw_demo -I %JAVA_HOME%\include -I %JAVA_HOME%\include\win32 *.cpp *.c ..\agent_util\*.c ..\java_crw_demo\*.c
+cl -I . -I ..\agent_util -I ..\java_crw_demo -I %JAVA_HOME%\include -I %JAVA_HOME%\include\win32 -LD *.c ..\agent_util\*.c ..\java_crw_demo\*.c -Femyagent.dll /DDEBUG /Zi /Fdmyagent.pdb 
 
-link /dll /opt:REF /out:myagent.dll *.obj
+set destination=..\..\..\build
+if not exist %destination% (
+mkdir %destination%
+)
+del /Q ..\..\..\build\*.*
 
-java -agentlib:myagent=help -version
+copy /Y *.obj %destination%
+copy /Y *.lib %destination%
+copy /Y *.dll %destination%
+copy /Y *.exp %destination%
+copy /Y *.pdb %destination%
 
-rem del *.obj *.lib *.dll *.exp Mtrace.h *.class
+echo ********************************
+echo *        Running...            *
+echo ********************************
 
-del *.obj *.lib *.dll *.exp *.class
+java -Xbootclasspath/a:myagent.jar -agentlib:myagent=max=2 -version
+
+if "%1" == "" (
+del *.obj *.lib *.dll *.exp *.ilk *.pdb *.class *.jar
+)
