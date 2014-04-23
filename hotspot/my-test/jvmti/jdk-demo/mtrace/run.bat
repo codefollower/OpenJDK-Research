@@ -16,12 +16,16 @@ copy /Y *.lib %destination%
 copy /Y *.dll %destination%
 copy /Y *.exp %destination%
 copy /Y *.pdb %destination%
+copy /Y *.jar %destination%
 
 echo ********************************
 echo *        Running...            *
 echo ********************************
 
-java -Xbootclasspath/a:myagent.jar -agentlib:myagent=max=2 -version
+rem java -Xbootclasspath/a:myagent.jar -agentlib:myagent=help -version
+rem 不能用"."号，要用"/"
+rem java -Xbootclasspath/a:myagent.jar -agentlib:myagent=include=java.lang.* -version
+java -Xbootclasspath/a:myagent.jar -agentlib:myagent=max=3,include=java/lang/* -version
 
 if "%1" == "" (
 del *.obj *.lib *.dll *.exp *.ilk *.pdb *.class *.jar

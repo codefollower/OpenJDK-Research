@@ -45,7 +45,7 @@ _jobject
 		void *reserved1;
 		void *reserved2;
 
-		jint (JNICALL *DestroyJavaVM)(JavaVM *vm);
+		jint (JNICALL *DestroyJavaVM)(JavaVM *vm); //对于C++版的jni，JavaVM就是JNIInvokeInterface_
 
 		jint (JNICALL *AttachCurrentThread)(JavaVM *vm, void **penv, void *args);
 
@@ -59,15 +59,18 @@ _jobject
 
 5个其他api
 ------------
+    //jni.cpp中把args转成了JDK1_1InitArgs，但是jni.h中已经删除了JDK1_1InitArgs，这个api没多大用
 	_JNI_IMPORT_OR_EXPORT_ jint JNICALL
 	JNI_GetDefaultJavaVMInitArgs(void *args);
 
 	_JNI_IMPORT_OR_EXPORT_ jint JNICALL
 	JNI_CreateJavaVM(JavaVM **pvm, void **penv, void *args);
 
+    //HotSpot内部实际上只返回最多一个
 	_JNI_IMPORT_OR_EXPORT_ jint JNICALL
 	JNI_GetCreatedJavaVMs(JavaVM **, jsize, jsize *);
 
+    //下面两个由vm回调，在本地代码中来实现，并不在jni.cpp中实现
 	JNIEXPORT jint JNICALL
 	JNI_OnLoad(JavaVM *vm, void *reserved);
 
