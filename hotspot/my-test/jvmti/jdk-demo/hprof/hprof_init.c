@@ -1897,7 +1897,8 @@ load_library(char *name)
     /* The library may be located in different ways, try both, but
      *   if it comes from outside the SDK/jre it isn't ours.
      */
-    getSystemProperty("sun.boot.library.path", &boot_path);
+    //getSystemProperty("sun.boot.library.path", &boot_path);
+    getSystemProperty("my.library.path", &boot_path);
     md_build_library_name(lname, FILENAME_MAX, boot_path, name);
     if ( strlen(lname) == 0 ) {
         HPROF_ERROR(JNI_TRUE, "Could not find library");

@@ -49,6 +49,12 @@
 
 #define TRACKER_PACKAGE         "com/sun/demo/jvmti/hprof"
 #define TRACKER_CLASS_NAME      TRACKER_PACKAGE "/Tracker"
+
+//#define TRACKER_PACKAGE         ""
+//#define TRACKER_CLASS_NAME      "Tracker"
+//#define TRACKER_PACKAGE         "my"
+//#define TRACKER_CLASS_NAME      TRACKER_PACKAGE "/Tracker"
+
 #define TRACKER_CLASS_SIG       "L" TRACKER_CLASS_NAME ";"
 
 #define TRACKER_NEWARRAY_NAME        "NewArray"

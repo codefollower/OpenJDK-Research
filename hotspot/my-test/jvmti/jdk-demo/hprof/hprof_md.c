@@ -258,11 +258,12 @@ md_get_prelude_path(char *path, int path_len, char *filename)
     if ( lastSlash != NULL ) {
         *lastSlash = '\0';
     }
-    lastSlash = strrchr(libdir, '\\');
-    if ( lastSlash != NULL ) {
-        *lastSlash = '\0';
-    }
-    (void)md_snprintf(path, path_len, "%s\\lib\\%s", libdir, filename);
+    //lastSlash = strrchr(libdir, '\\');
+    //if ( lastSlash != NULL ) {
+    //    *lastSlash = '\0';
+    //}
+    //(void)md_snprintf(path, path_len, "%s\\lib\\%s", libdir, filename);
+    (void)md_snprintf(path, path_len, "%s\\%s", libdir, filename);
 }
 
 int
