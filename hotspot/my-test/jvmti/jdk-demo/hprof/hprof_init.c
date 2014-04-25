@@ -1972,7 +1972,8 @@ Agent_OnLoad(JavaVM *vm, char *options, void *reserved)
     getJvmti();
 
 #ifndef SKIP_NPT
-    getSystemProperty("sun.boot.library.path", &boot_path);
+    //getSystemProperty("sun.boot.library.path", &boot_path);
+    getSystemProperty("my.library.path", &boot_path);
     /* Load in NPT library for character conversions */
     md_build_library_name(npt_lib, sizeof(npt_lib), boot_path, NPT_LIBNAME);
     if ( strlen(npt_lib) == 0 ) {

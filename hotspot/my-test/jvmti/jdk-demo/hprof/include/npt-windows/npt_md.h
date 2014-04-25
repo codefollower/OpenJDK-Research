@@ -44,7 +44,7 @@
         *(pnpt) = NULL;                                                 \
         _handle =  LoadLibrary(path);                                   \
         if ( _handle == NULL ) NPT_ERROR("Cannot open library");        \
-        _sym = GetProcAddress(_handle, "nptInitialize");                \
+        _sym = GetProcAddress(_handle, "_nptInitialize@12");                \
         if ( _sym == NULL ) NPT_ERROR("Cannot find nptInitialize");     \
         ((NptInitialize)_sym)((pnpt), version, (options));              \
         if ( *(pnpt) == NULL ) NPT_ERROR("Cannot initialize NptEnv");   \
@@ -59,7 +59,7 @@
         if ( (npt) == NULL ) NPT_ERROR("NptEnv* is NULL");              \
         _handle = (npt)->libhandle;                                     \
         if ( _handle == NULL ) NPT_ERROR("npt->libhandle is NULL");     \
-        _sym = GetProcAddress(_handle, "nptTerminate");                 \
+        _sym = GetProcAddress(_handle, "_nptTerminate@8");                 \
         if ( _sym == NULL ) NPT_ERROR("Cannot find nptTerminate");      \
         ((NptTerminate)_sym)((npt), (options));                         \
         (void)FreeLibrary(_handle);                                     \

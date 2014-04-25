@@ -11,6 +11,8 @@ jar -cvf myagent.jar com
 
 cl -I . -I %JAVA_HOME%\include -I %JAVA_HOME%\include\win32 -LD ..\java_crw_demo\*.c -Fejava_crw_demo.dll /DDEBUG /Zi /Fdjava_crw_demo.pdb
 
+cl -I . -I %JAVA_HOME%\include -I %JAVA_HOME%\include\win32 -I include\npt -I include\npt-windows -LD include\npt\*.c include\npt-windows\*.c -Fenpt.dll /DDEBUG /Zi /Fdnpt.pdb
+
 rem cl /D "_X86_" /D "SKIP_NPT" -I . -I ..\java_crw_demo -I %JAVA_HOME%\include -I %JAVA_HOME%\include\win32 -I include\javavm\export -I include\npt -I include\npt-windows -LD *.c ..\java_crw_demo\*.c include\npt\*.c include\npt-windows\*.c -Femyagent.dll /DDEBUG /Zi /Fdmyagent.pdb wsock32.lib winmm.lib
 
 cl /D "_X86_" -I . -I ..\java_crw_demo -I %JAVA_HOME%\include -I %JAVA_HOME%\include\win32 -I include\javavm\export -I include\npt -I include\npt-windows -LD *.c ..\java_crw_demo\*.c include\npt\*.c include\npt-windows\*.c -Femyagent.dll /DDEBUG /Zi /Fdmyagent.pdb wsock32.lib winmm.lib
