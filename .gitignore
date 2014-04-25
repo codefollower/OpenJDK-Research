@@ -33,3 +33,5 @@ build
 nbproject
 hotspot.log
 
+*.pdb
+*.ilk
