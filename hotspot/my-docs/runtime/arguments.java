@@ -49,6 +49,7 @@ D:\JavaSE1.8\jre\lib\resources.jar;D:\JavaSE1.8\jre\lib\rt.jar;D:\JavaSE1.8\jre\
 
 -XXaltjvm=$(TargetDir) -Dsun.java.launcher=gamma -Xbootclasspath/a:myagent.jar -agentlib:myagent=max=2 -version
  
+-XX:+CompileTheWorld 会退出JVN
 
 加 -XX:+PrintFlagsInitial
 ==================================(在share\vm\runtime\globals.hpp定义)

@@ -1,5 +1,7 @@
 @echo off
+if not exist ..\classes\TestLauncher.class (
 javac ..\classes\TestLauncher.java
+)
 
 cl -I . -I %JAVA_HOME%\include -I %JAVA_HOME%\include\win32 *.c E:\openjdk\debug\build\vs-i486\compiler1\debug\jvm.lib /DDEBUG /Zi /Fdlauncher.pdb
 
@@ -20,7 +22,9 @@ echo ********************************
 
 set path=E:\openjdk\debug\build\vs-i486\compiler1\debug;%path%
 
-launcher -Djava.class.path=E:\openjdk\git\hotspot\my-test\classes TestLauncher
+rem launcher -Djava.class.path=E:\openjdk\git\hotspot\my-test\classes TestLauncher
+
+launcher @..\jvmArgsFile.txt
 
 if "%1" == "" (
 del *.obj *.exe *.ilk *.pdb 

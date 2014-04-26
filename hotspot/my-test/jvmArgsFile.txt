@@ -1,0 +1,26 @@
+#-XX:+PrintFlagsWithComments
+#-agentlib:hprof
+#-XX:-DumpSharedSpaces
+#-XX:-VerifyDuringStartup
+
+#-verbose:gc
+#-XXaltjvm=$(TargetDir)
+#-XX:Flags=E:\openjdk\git\hotspot\my-test\jvmFlagsFile.txt
+
+#加-XX:+PrintMallocFree会出现错误：Internal Error at mutex.cpp:454
+#-XX:+PrintMallocFree
+
+#-Xrunhprof:help
+#-XX:NativeMemoryTracking=detail
+#-Djava.library.path=E:\openjdk\git\hotspot\my-test\build
+
+#-Xbootclasspath/a:E:\openjdk\git\hotspot\my-test\build\myagent.jar
+#-agentlib:myagent=max=2 -version
+
+#此参数会退出JVN
+#-XX:+CompileTheWorld
+
+-Djava.class.path=E:\openjdk\git\hotspot\my-test\classes
+
+#类名总是最后一个
+TestLauncher
