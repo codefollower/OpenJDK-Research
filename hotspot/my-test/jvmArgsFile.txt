@@ -12,15 +12,20 @@
 
 #-Xrunhprof:help
 #-XX:NativeMemoryTracking=detail
-#-Djava.library.path=E:\openjdk\git\hotspot\my-test\build
+
+-Djava.library.path=E:\openjdk\git\hotspot\my-test\build
 
 #-Xbootclasspath/a:E:\openjdk\git\hotspot\my-test\build\myagent.jar
-#-agentlib:myagent=max=2 -version
+#-agentlib:myagent=max=2
+#-XX:SuppressErrorAt=\jvmtiEventController.cpp:634
+
+-agentlib:myagent
 
 #此参数会退出JVN
 #-XX:+CompileTheWorld
 
--Djava.class.path=E:\openjdk\git\hotspot\my-test\classes
+-Djava.class.path=E:\openjdk\git\hotspot\my-test\classes;E:\openjdk\git\hotspot\my-test\jvmti\api-test
 
 #类名总是最后一个
-TestLauncher
+#TestLauncher
+ApiTest

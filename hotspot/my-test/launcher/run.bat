@@ -9,7 +9,7 @@ set destination=..\build
 if not exist %destination% (
 mkdir %destination%
 )
-del /Q ..\build\*.*
+rem del /Q ..\build\*.*
 
 copy /Y *.obj %destination%
 copy /Y *.ilk %destination%
@@ -20,7 +20,7 @@ echo ********************************
 echo *        Running...            *
 echo ********************************
 
-set path=E:\openjdk\debug\build\vs-i486\compiler1\debug;%path%
+set path=E:\openjdk\debug\build\vs-i486\compiler1\debug;E:\openjdk\git\hotspot\my-test\build;%path%
 
 rem launcher -Djava.class.path=E:\openjdk\git\hotspot\my-test\classes TestLauncher
 
