@@ -2,16 +2,19 @@
 #include "jvmti.h"
 #include "agent_util.h"
 
+#define CLASS_NAME "ApiTest"
+
 static jvmtiEnv *jvmti;
 static jint rc;
 static jvmtiError err;
+static jobject outLock;
 
 void JNICALL SetWatchedField(JNIEnv* env) {
   jclass class_ApiTest;
   jfieldID f1;
   jfieldID f2;
 
-  class_ApiTest = (*env)->FindClass(env, "ApiTest");
+  class_ApiTest = (*env)->FindClass(env, CLASS_NAME);
   f1 = (*env)->GetFieldID(env, class_ApiTest, "f1", "I");
   f2 = (*env)->GetFieldID(env, class_ApiTest, "f2", "I");
 
@@ -23,9 +26,18 @@ void JNICALL SetWatchedField(JNIEnv* env) {
   check_jvmti_error(jvmti, err, "Set Field Access Watch");
 }
 
+void JNICALL InitOutLock(JNIEnv* env) {
+  jclass class_ApiTest = (*env)->FindClass(env, CLASS_NAME);
+  jfieldID out = (*env)->GetStaticFieldID(env, class_ApiTest, "outLock", "Ljava/lang/Object;");
+  if(out == NULL)
+    check_jni_error(env, "GetStaticFieldID: outLock static field not found");
+  outLock = (*env)->GetStaticObjectField(env, class_ApiTest, out);
+}
+
 void JNICALL
 VMInit(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread) {
 	printf("VMInit\n");
+  InitOutLock(jni_env);
   SetWatchedField(jni_env);
 }
 
@@ -125,8 +137,10 @@ ExceptionCatch(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread,
 
 {
 	printf("ExceptionCatch\n");
-  if((*jni_env)->ExceptionCheck(jni_env))
+  if((*jni_env)->ExceptionCheck(jni_env)) {
+    (*jni_env)->ExceptionDescribe(jni_env);
     (*jni_env)->ExceptionClear(jni_env);
+  }
 }
 
 void JNICALL
@@ -193,35 +207,61 @@ DataDumpRequest(jvmtiEnv *jvmti_env) {
 	printf("DataDumpRequest\n");
 }
 
+void JNICALL printThreadName(JNIEnv* jni_env, jthread thread, jobject object, char *eventName) {
+  jvmtiThreadInfo info;
+  //避免对outLock进行MonitorEnter时导致递归调用
+  if((*jni_env)->IsSameObject(jni_env, outLock, object))
+     return;
+  err = (*jvmti)->GetThreadInfo(jvmti, thread, &info);
+  check_jvmti_error(jvmti, err, "GetThreadInfo");
+
+  //TODO
+  //4个Monitor的回调会优先在VMInit之前运行吗？
+  //全局的outLock变量直到VMInit时才初始化，
+  //如果Monitor的回调优先运行那么就要判断outLock是否为NULL
+  //if(outLock != NULL) {
+    rc = (*jni_env)->MonitorEnter(jni_env, outLock);
+    if(rc!=0)
+      check_jni_error(jni_env, "MonitorEnter");
+  //}
+  printf("%-15s: %s\n", info.name, eventName);
+  //if(outLock != NULL) {
+    rc = (*jni_env)->MonitorExit(jni_env, outLock);
+    if(rc!=0)
+      check_jni_error(jni_env, "MonitorExit");
+  //}
+}
+
 void JNICALL
 MonitorContendedEnter(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread,
 		jobject object)
-
 {
-	printf("MonitorContendedEnter\n");
+	//printf("MonitorContendedEnter\n");
+  printThreadName(jni_env, thread, object, "MonitorContendedEnter");
 }
 
 void JNICALL
 MonitorContendedEntered(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread,
 		jobject object)
-
 {
-	printf("MonitorContendedEntered\n");
+	//printf("MonitorContendedEntered\n");
+  printThreadName(jni_env, thread, object, "MonitorContendedEntered");
 }
+
 void JNICALL
 MonitorWait(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread,
 		jobject object, jlong timeout)
-
 {
-	printf("MonitorWait\n");
+	//printf("MonitorWait\n");
+  printThreadName(jni_env, thread, object, "MonitorWait");
 }
 
 void JNICALL
 MonitorWaited(jvmtiEnv *jvmti_env, JNIEnv* jni_env, jthread thread,
 		jobject object, jboolean timed_out)
-
 {
-	printf("MonitorWaited\n");
+	//printf("MonitorWaited\n");
+  printThreadName(jni_env, thread, object, "MonitorWaited");
 }
 
 void JNICALL
@@ -349,31 +389,31 @@ static void SetEventCallbacks(void) {
 	check_jvmti_error(jvmti, err, "set event callbacks");
 
 	EnableEvent(JVMTI_EVENT_VM_INIT);
-	EnableEvent(JVMTI_EVENT_VM_DEATH);
+	//EnableEvent(JVMTI_EVENT_VM_DEATH);
 	//EnableEvent(JVMTI_EVENT_THREAD_START);
 	//EnableEvent(JVMTI_EVENT_THREAD_END);
 	//EnableEvent(JVMTI_EVENT_CLASS_FILE_LOAD_HOOK); //触发回调次数非常多的
 	//EnableEvent(JVMTI_EVENT_CLASS_LOAD); //触发回调次数非常多的
 	//EnableEvent(JVMTI_EVENT_CLASS_PREPARE); //触发回调次数非常多的
-	EnableEvent(JVMTI_EVENT_VM_START);
-	EnableEvent(JVMTI_EVENT_EXCEPTION);
-	EnableEvent(JVMTI_EVENT_EXCEPTION_CATCH);
+	//EnableEvent(JVMTI_EVENT_VM_START);
+	//EnableEvent(JVMTI_EVENT_EXCEPTION);
+	//EnableEvent(JVMTI_EVENT_EXCEPTION_CATCH);
 	//EnableEvent(JVMTI_EVENT_SINGLE_STEP); //用my-test\launcher执行时HotSpot VM会crash
-	EnableEvent(JVMTI_EVENT_FRAME_POP);
-	EnableEvent(JVMTI_EVENT_BREAKPOINT);
-	EnableEvent(JVMTI_EVENT_FIELD_ACCESS);
-	EnableEvent(JVMTI_EVENT_FIELD_MODIFICATION);
+	//EnableEvent(JVMTI_EVENT_FRAME_POP);
+	//EnableEvent(JVMTI_EVENT_BREAKPOINT);
+	//EnableEvent(JVMTI_EVENT_FIELD_ACCESS);
+	//EnableEvent(JVMTI_EVENT_FIELD_MODIFICATION);
 	//EnableEvent(JVMTI_EVENT_METHOD_ENTRY); //触发回调次数非常多的
 	//EnableEvent(JVMTI_EVENT_METHOD_EXIT); //触发回调次数非常多的
 	//EnableEvent(JVMTI_EVENT_NATIVE_METHOD_BIND); //触发回调次数非常多的
 	//EnableEvent(JVMTI_EVENT_COMPILED_METHOD_LOAD);
 	//EnableEvent(JVMTI_EVENT_COMPILED_METHOD_UNLOAD);
 	//EnableEvent(JVMTI_EVENT_DYNAMIC_CODE_GENERATED);
-	//EnableEvent(JVMTI_EVENT_DATA_DUMP_REQUEST);
-	//EnableEvent(JVMTI_EVENT_MONITOR_WAIT);
-	//EnableEvent(JVMTI_EVENT_MONITOR_WAITED);
-	//EnableEvent(JVMTI_EVENT_MONITOR_CONTENDED_ENTER);
-	//EnableEvent(JVMTI_EVENT_MONITOR_CONTENDED_ENTERED);
+	EnableEvent(JVMTI_EVENT_DATA_DUMP_REQUEST);
+	EnableEvent(JVMTI_EVENT_MONITOR_WAIT);
+	EnableEvent(JVMTI_EVENT_MONITOR_WAITED);
+	EnableEvent(JVMTI_EVENT_MONITOR_CONTENDED_ENTER);
+	EnableEvent(JVMTI_EVENT_MONITOR_CONTENDED_ENTERED);
 	//EnableEvent(JVMTI_EVENT_RESOURCE_EXHAUSTED);
 	//EnableEvent(JVMTI_EVENT_GARBAGE_COLLECTION_START);
 	//EnableEvent(JVMTI_EVENT_GARBAGE_COLLECTION_FINISH);

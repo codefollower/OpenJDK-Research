@@ -1,7 +1,7 @@
 @echo off
-if not exist ApiTest.class (
+rem if not exist ApiTest.class (
 javac -encoding UTF-8 *.java
-)
+rem )
 cl -I . -I %JAVA_HOME%\include -I %JAVA_HOME%\include\win32 -I ..\jdk-demo\agent_util -LD *.c ..\jdk-demo\agent_util\*.c -Femyagent.dll /DDEBUG /Zi /Fdmyagent.pdb 
 
 set destination=..\..\build

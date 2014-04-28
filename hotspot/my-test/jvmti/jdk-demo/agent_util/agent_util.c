@@ -211,6 +211,16 @@ check_jvmti_error(jvmtiEnv *jvmti, jvmtiError errnum, const char *str)
     }
 }
 
+void
+check_jni_error(JNIEnv* env, const char *str)
+{
+    if((*env)->ExceptionCheck(env)) {
+        (*env)->ExceptionDescribe(env);
+        (*env)->ExceptionClear(env);
+    }
+    fatal_error("ERROR: JNI: %s\n", str);
+}
+
 /* All memory allocated by JVMTI must be freed by the JVMTI Deallocate
  *   interface.
  */
