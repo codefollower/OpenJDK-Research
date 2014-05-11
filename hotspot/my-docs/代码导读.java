@@ -25,7 +25,7 @@ java.c -> JavaMain
 share\vm\interpreter\interpreterRuntime.cpp -> _new
 
 
-符号引入解析:
+符号引用解析:
 ----------------
 share\vm\interpreter\linkResolver.cpp -> 以resolve_开头的方法
 
