@@ -1,5 +1,10 @@
 ## 构建HotSpot
 
+<strong>
+此文档只适用于OpenJDK1.7
+</strong>
+
+<br>
 这里以64位Ubuntu 12.04为例，<br>
 先确认gcc、gdb、make这些命令是否可用，<br>
 如果系统提示找不到这些命令，你需要先装好这些工具，这里就不介绍怎么安装这些工具了。<br>
