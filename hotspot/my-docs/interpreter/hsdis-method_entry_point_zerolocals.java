@@ -1,10 +1,16 @@
 //对应文件: src\cpu\x86\vm\templateInterpreter_x86_32.cpp
 //对应方法: 1401行的InterpreterGenerator::generate_normal_entry(bool synchronized)
 测试:
-public static void main(String[] args) {
-    int i = 0;
-    i++;
-}
+    public static void main(String[] args) {
+        int i = 0;
+        i++;
+        run();
+    }
+    
+    static void run() {
+        int i = 0;
+        i++;
+    }
 
 public static void main(java.lang.String[]);
   descriptor: ([Ljava/lang/String;)V
@@ -14,16 +20,10 @@ public static void main(java.lang.String[]);
        0: iconst_0
        1: istore_1
        2: iinc          1, 1
-       5: return
-    LineNumberTable:
-      line 5: 0
-      line 6: 2
-      line 10: 5
-    LocalVariableTable:
-      Start  Length  Slot  Name   Signature
-          0       6     0  args   [Ljava/lang/String;
-          2       4     1     i   I
-//从
+       5: invokestatic  #16                 // Method run:()V
+       8: return
+
+
 method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 
   0x01cbba60: mov    0x8(%ebx),%edx
