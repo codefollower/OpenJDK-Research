@@ -17,6 +17,8 @@ share\vm\runtime\init.cpp -> init_globals()
 -XX:+CountBytecodes
     
 
+interpreter.cpp -> interpreter_init()触发JVMTI的DynamicCodeGenerated回调
+
 
 在interpreterRuntime.cpp中的方法是
 >	jvm.dll!InterpreterRuntime::_new(JavaThread * thread, constantPoolOopDesc * pool, int index) Line 163	C++
