@@ -558,9 +558,9 @@ void CodeCache::initialize() {
   // This was originally just a check of the alignment, causing failure, instead, round
   // the code cache to the page size.  In particular, Solaris is moving to a larger
   // default page size.
-  CodeCacheExpansionSize = round_to(CodeCacheExpansionSize, os::vm_page_size());
-  InitialCodeCacheSize = round_to(InitialCodeCacheSize, os::vm_page_size());
-  ReservedCodeCacheSize = round_to(ReservedCodeCacheSize, os::vm_page_size());
+  CodeCacheExpansionSize = round_to(CodeCacheExpansionSize, os::vm_page_size()); //默认32k
+  InitialCodeCacheSize = round_to(InitialCodeCacheSize, os::vm_page_size()); //默认160k
+  ReservedCodeCacheSize = round_to(ReservedCodeCacheSize, os::vm_page_size()); //默认32m
   if (!_heap->reserve(ReservedCodeCacheSize, InitialCodeCacheSize, CodeCacheSegmentSize)) {
     vm_exit_during_initialization("Could not reserve enough space for code cache");
   }

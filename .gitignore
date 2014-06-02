@@ -28,6 +28,11 @@
 # .settings
 # .classpath
 # .project
+
+hotspot/.project
+hotspot/.cproject
+hotspot/.settings
+
 target
 build
 nbproject

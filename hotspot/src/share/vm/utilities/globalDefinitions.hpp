@@ -403,7 +403,7 @@ const uint64_t KlassEncodingMetaspaceMax = (uint64_t(max_juint) + 1) << LogKlass
 // Signed variants of alignment helpers.  There are two versions of each, a macro
 // for use in places like enum definitions that require compile-time constant
 // expressions and a function for all other places so as to get type checking.
-
+//类似round_to，但是不要求alignment是2的倍数
 #define align_size_up_(size, alignment) (((size) + ((alignment) - 1)) & ~((alignment) - 1))
 
 inline bool is_size_aligned(size_t size, size_t alignment) {
@@ -1103,6 +1103,8 @@ inline int exact_log2_long(jlong x) {
 
 
 // returns integer round-up to the nearest multiple of s (s must be a power of two)
+//把x转成s的最小倍数(大于等于x)，
+//比如x=7000, s=4096时，那么就返回8192
 inline intptr_t round_to(intptr_t x, uintx s) {
   #ifdef ASSERT
     if (!is_power_of_2(s)) basic_fatal("s must be a power of 2");
@@ -1112,6 +1114,8 @@ inline intptr_t round_to(intptr_t x, uintx s) {
 }
 
 // returns integer round-down to the nearest multiple of s (s must be a power of two)
+//把x转成s的最小倍数(小于等于x)，
+//比如x=8300, s=4096时，那么就返回8192
 inline intptr_t round_down(intptr_t x, uintx s) {
   #ifdef ASSERT
     if (!is_power_of_2(s)) basic_fatal("s must be a power of 2");
