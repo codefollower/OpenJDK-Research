@@ -628,7 +628,7 @@ Klass* SystemDictionary::resolve_instance_class_or_null(Symbol* name,
   // ParallelCapable Classloaders and the bootstrap classloader,
   // or all classloaders with UnsyncloadClass do not acquire lock here
   bool DoObjectLock = true;
-  if (is_parallelCapable(class_loader)) {
+  if (is_parallelCapable(class_loader)) { //看看java.lang.ClassLoader类是否有parallelLockMap字段(1.7才加入)
     DoObjectLock = false;
   }
 

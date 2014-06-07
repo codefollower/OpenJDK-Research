@@ -350,9 +350,9 @@ void ClassLoader::setup_meta_index() {
   // Set up meta index which allows us to open boot jars lazily if
   // class data sharing is enabled
   const char* known_version = "% VERSION 2";
-  //D:\JavaSE1.8\jre\lib\meta-indexÎÄ¼ş
+  //D:\JavaSE1.8\jre\lib\meta-indexæ–‡ä»¶
   char* meta_index_path = Arguments::get_meta_index_path();
-  //D:\JavaSE1.8\jre\lib\Ä¿Â¼
+  //D:\JavaSE1.8\jre\lib\ç›®å½•
   char* meta_index_dir  = Arguments::get_meta_index_dir();
   FILE* file = fopen(meta_index_path, "r");
   int line_no = 0;
@@ -799,8 +799,8 @@ void ClassLoader::copy_package_info_table(char** top, char* end) {
 
 
 PackageInfo* ClassLoader::lookup_package(const char *pkgname) {
-  //µ±pkgname="java/lang/Object.class"Ê±£¬cp="/Object.class"
-  //strrchrº¯ÊıÔÚstring.hÖĞ
+  //å½“pkgname="java/lang/Object.class"æ—¶ï¼Œcp="/Object.class"
+  //strrchrå‡½æ•°åœ¨string.hä¸­
   const char *cp = strrchr(pkgname, '/');
   if (cp != NULL) {
     // Package prefix found
@@ -837,7 +837,7 @@ bool ClassLoader::add_package(const char *pkgname, int classpath_index, TRAPS) {
 
       memcpy(new_pkgname, pkgname, n);
       new_pkgname[n] = '\0';
-	  //µ±pkgname="java/lang/Object.class"Ê±£¬new_pkgname="java/lang/"
+	  //å½“pkgname="java/lang/Object.class"æ—¶ï¼Œnew_pkgname="java/lang/"
       pp = _package_hash_table->new_entry(new_pkgname, n);
       pp->set_index(classpath_index);
 

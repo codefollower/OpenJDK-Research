@@ -342,7 +342,7 @@ class ConstantPool : public Metadata {
   }
 
   // Tag query
-
+  //会调用constantTag(jbyte tag)，这是C++的隐式规则: 转换构造函数
   constantTag tag_at(int which) const { return (constantTag)tags()->at_acquire(which); }
 
   // Fetching constants

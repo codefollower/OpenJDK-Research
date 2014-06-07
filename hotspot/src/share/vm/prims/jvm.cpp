@@ -3960,11 +3960,13 @@ jclass find_class_from_class_loader(JNIEnv* env, Symbol* name, jboolean init, Ha
   // Security Note:
   //   The Java level wrapper will perform the necessary security check allowing
   //   us to pass the NULL as the initiating class loader.
+  //在resolve_or_fail里只是完成了类加载
   Klass* klass = SystemDictionary::resolve_or_fail(name, loader, protection_domain, throwError != 0, CHECK_NULL);
 
   KlassHandle klass_handle(THREAD, klass);
   // Check if we should initialize the class
   if (init && klass_handle->oop_is_instance()) {
+	//在initialize里完成了链接与初始化
     klass_handle->initialize(CHECK_NULL);
   }
   return (jclass) JNIHandles::make_local(env, klass_handle->java_mirror());

@@ -3853,7 +3853,7 @@ void nx_check_protection() {
 
 // this is called _before_ the global arguments have been parsed
 void os::init(void) {
-  _initial_pid = _getpid(); //ÔÚ%VS_HOME%\VC\include\process.hÖÐ¶¨Òå_getpid
+  _initial_pid = _getpid(); //åœ¨%VS_HOME%\VC\include\process.hä¸­å®šä¹‰_getpid
 
   init_random(1234567);
 

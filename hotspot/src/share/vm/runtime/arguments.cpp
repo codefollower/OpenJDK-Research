@@ -136,9 +136,9 @@ static bool match_option(const JavaVMOption *option, const char* name,
                          const char** tail) {
   int len = (int)strlen(name);
   if (strncmp(option->optionString, name, len) == 0) {
-    //Èç¹ûnameÊÇ"-Dsun.java.launcher="£¬
-    //optionÊÇ"-Dsun.java.launcher=gamma"
-    //ÄÇÃ´tail¾ÍÊÇ"gamma"
+    //å¦‚æœnameæ˜¯"-Dsun.java.launcher="ï¼Œ
+    //optionæ˜¯"-Dsun.java.launcher=gamma"
+    //é‚£ä¹ˆtailå°±æ˜¯"gamma"
     *tail = option->optionString + len;
     return true;
   } else {
@@ -157,14 +157,14 @@ void Arguments::process_sun_java_launcher_properties(JavaVMInitArgs* args) {
   // See if sun.java.launcher or sun.java.launcher.pid is defined.
   // Must do this before setting up other system properties,
   // as some of them may depend on launcher type.
-  //Ò»Ğ©²ÎÊıÀı×Ó:
+  //ä¸€äº›å‚æ•°ä¾‹å­:
   //-Djava.class.path=.
   //-Dsun.java.command=Test
   //-Dsun.java.launcher=gamma
-  //-Dsun.java.launcher.pid=8396 (linuxÓĞÕâ¸ö²ÎÊı£¬windowsÃ»ÓĞ)
+  //-Dsun.java.launcher.pid=8396 (linuxæœ‰è¿™ä¸ªå‚æ•°ï¼Œwindowsæ²¡æœ‰)
   for (int index = 0; index < args->nOptions; index++) {
     const JavaVMOption* option = args->options + index;
-    const char* tail; //´æ·ÅµÈºÅºóÃæµÄÖµ
+    const char* tail; //å­˜æ”¾ç­‰å·åé¢çš„å€¼
 
     if (match_option(option, "-Dsun.java.launcher=", &tail)) {
       process_java_launcher_argument(tail, option->extraInfo);
@@ -1806,7 +1806,7 @@ void Arguments::process_java_compiler_argument(char* arg) {
   }
 }
 
-void Arguments::process_java_launcher_argument(const char* launcher, void* extra_info) { //Î´Ê¹ÓÃextra_info
+void Arguments::process_java_launcher_argument(const char* launcher, void* extra_info) { //æœªä½¿ç”¨extra_info
   _sun_java_launcher = strdup(launcher);
   if (strcmp("gamma", _sun_java_launcher) == 0) {
     _created_by_gamma_launcher = true;
@@ -2581,8 +2581,8 @@ jint Arguments::parse_each_vm_init_arg(const JavaVMInitArgs* args,
       *scp_assembly_required_p = true;
     // -Xrun
     } else if (match_option(option, "-Xrun", &tail)) {
-      //ÀıÈç-Xrunhprof:help£¬×îºóµÃµ½µÄnameÊÇhprof£¬optionsÊÇhelp
-      //µÈ¼ÛÓÚ-agentlib:hprof=help
+      //ä¾‹å¦‚-Xrunhprof:helpï¼Œæœ€åå¾—åˆ°çš„nameæ˜¯hprofï¼Œoptionsæ˜¯help
+      //ç­‰ä»·äº-agentlib:hprof=help
       if (tail != NULL) {
         const char* pos = strchr(tail, ':');
         size_t len = (pos == NULL) ? strlen(tail) : pos - tail;

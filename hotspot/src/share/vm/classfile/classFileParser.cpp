@@ -112,6 +112,8 @@ void ClassFileParser::parse_constant_pool_entries(int length, TRAPS) {
   unsigned int hashValues[SymbolTable::symbol_alloc_batch_size];
   int names_count = 0;
 
+  //可以通过类似javap -v java.lang.Object这样的命令来打印出常量池，然后对比下面的代码
+  //同时参考<<jvms8>>的第4节: The class File Format
   // parsing  Index 0 is unused
   for (int index = 1; index < length; index++) {
     // Each of the following case guarantees one more byte in the stream
@@ -119,11 +121,12 @@ void ClassFileParser::parse_constant_pool_entries(int length, TRAPS) {
     // so we don't need bounds-check for reading tag.
     u1 tag = cfs->get_u1_fast();
     switch (tag) {
-		//�ܹ�14��tag��
-		//����MethodHandle��MethodType��InvokeDynamic
-		//�����ϰ���jvm�淶7���е�С��˳������case���Ⱥ�
+	//总共14个tag，
+	//除了MethodHandle、MethodType、InvokeDynamic
+	//基本上按<<jvms8>>中的小节顺序来定case的先后
       case JVM_CONSTANT_Class :
         {
+          //下面的guarantee_more总是多一个字节
           cfs->guarantee_more(3, CHECK);  // name_index, tag/access_flags
           u2 name_index = cfs->get_u2_fast();
           _cp->klass_index_at_put(index, name_index);
@@ -253,6 +256,7 @@ void ClassFileParser::parse_constant_pool_entries(int length, TRAPS) {
         break;
       case JVM_CONSTANT_Utf8 :
         {
+          //这里没有多加1，get_u1_buffer()没有改变流的位置
           cfs->guarantee_more(2, CHECK);  // utf8_length
           u2  utf8_length = cfs->get_u2_fast();
           u1* utf8_buffer = cfs->get_u1_buffer();
@@ -327,6 +331,7 @@ constantPoolHandle ClassFileParser::parse_constant_pool(TRAPS) {
 
   cfs->guarantee_more(3, CHECK_(nullHandle)); // length, first cp tag
   u2 length = cfs->get_u2_fast();
+  //因为0号下标默认是被保留的，所以常量池的条目数至少有一个
   guarantee_property(
     length >= 1, "Illegal constant pool size %u in class file %s",
     length, CHECK_(nullHandle));
@@ -341,8 +346,8 @@ constantPoolHandle ClassFileParser::parse_constant_pool(TRAPS) {
   int index = 1;  // declared outside of loops for portability
 
   // first verification pass - validate cross references and fixup class and string constants
-  //��鳣��������ָ��������Ƿ���ȷ��
-  //����JVM_CONSTANT_Fieldref��class_index������JVM_CONSTANT_Class
+  //检查常量池索引指向的类型是否正确，
+  //比如JVM_CONSTANT_Fieldref的class_index必须是JVM_CONSTANT_Class
   for (index = 1; index < length; index++) {          // Index 0 is unused
     jbyte tag = cp->tag_at(index).value();
     switch (tag) {
@@ -1331,7 +1336,7 @@ u2* ClassFileParser::parse_exception_table(u4 code_length,
       }
     }
   } else {
-    cfs->skip_u2_fast(exception_table_length * 4);
+    cfs->skip_u2_fast(exception_table_length * 4); //为什么不乘以8？因为用了skip_u2_fast，而skip_u2_fast里已经乘以2了
   }
   return exception_table_start;
 }
@@ -2016,7 +2021,7 @@ methodHandle ClassFileParser::parse_method(bool is_interface,
   Symbol*  signature = _cp->symbol_at(signature_index);
 
   AccessFlags access_flags;
-  if (name == vmSymbols::class_initializer_name()) {
+  if (name == vmSymbols::class_initializer_name()) { //是否是静态初始化方法:<clinit>
     // We ignore the other access flags for a valid class initializer.
     // (JVM Spec 2nd ed., chapter 4.6)
     if (_major_version < 51) { // backward compatibility
@@ -2114,7 +2119,7 @@ methodHandle ClassFileParser::parse_method(bool is_interface,
       parsed_code_attribute = true;
 
       // Stack size, locals size, and code size
-      if (_major_version == 45 && _minor_version <= 2) {
+      if (_major_version == 45 && _minor_version <= 2) { //JDK 1.0.2之前的版本，从1.0.2开始的classfile版本号是45.3
         cfs->guarantee_more(4, CHECK_(nullHandle));
         max_stack = cfs->get_u1_fast();
         max_locals = cfs->get_u1_fast();
@@ -4383,6 +4388,7 @@ void append_interfaces(GrowableArray<Klass*>* result, Array<Klass*>* ifs) {
   }
 }
 
+//返回类实现的所有接口，包括直接实现的接口、所有超类实现的接口、接口本身继承的接口，重复的接口不计入
 Array<Klass*>* ClassFileParser::compute_transitive_interfaces(
                                         instanceKlassHandle super,
                                         Array<Klass*>* local_ifs, TRAPS) {

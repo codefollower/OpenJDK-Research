@@ -97,7 +97,7 @@ jint init_globals() {
   classLoader_init();
   codeCache_init();
   VM_Version_init();
-  os_init_globals(); //内部没做什么事
+  os_init_globals(); //璋冪敤interpreter_init()鏃讹紝宸茶Е鍙慣emplateTable::initialize()
   stubRoutines_init1();
   jint status = universe_init();  // dependent on codeCache_init and
                                   // stubRoutines_init1 and metaspace_init.
@@ -108,7 +108,7 @@ jint init_globals() {
   invocationCounter_init();  // before any methods loaded
   marksweep_init();
   accessFlags_init();
-  templateTable_init(); //调用interpreter_init()时，已触发TemplateTable::initialize()
+  templateTable_init(); //锟斤拷锟斤拷interpreter_init()时锟斤拷锟窖达拷锟斤拷TemplateTable::initialize()
   InterfaceSupport_init();
   SharedRuntime::generate_stubs();
   universe2_init();  // dependent on codeCache_init and stubRoutines_init1
@@ -133,8 +133,8 @@ jint init_globals() {
 
   // All the flags that get adjusted by VM_Version_init and os::init_2
   // have been set so dump the flags now.
-  //对应-XX:+PrintFlagsFinal，与-XX:+PrintFlagsWithComments类似，
-  //后者调用printFlags时第二个参数是true，并且在share\vm\runtime\arguments.cpp的parse中就调用了，然后vm马上退出
+  //锟斤拷应-XX:+PrintFlagsFinal锟斤拷锟斤拷-XX:+PrintFlagsWithComments锟斤拷锟狡ｏ拷
+  //锟斤拷锟竭碉拷锟斤拷printFlags时锟节讹拷锟斤拷锟斤拷锟斤拷锟斤拷true锟斤拷锟斤拷锟斤拷锟斤拷share\vm\runtime\arguments.cpp锟斤拷parse锟叫就碉拷锟斤拷锟剿ｏ拷然锟斤拷vm锟斤拷锟斤拷锟剿筹拷
   if (PrintFlagsFinal) {
     CommandLineFlags::printFlags(tty, false);
   }

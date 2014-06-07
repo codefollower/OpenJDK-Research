@@ -196,8 +196,8 @@ void TemplateTable::def(Bytecodes::Code code, int flags, TosState in, TosState o
   // extra set of 5 dispatch tables for the wide instructions - for simplicity
   // they all go with one table)
   assert(in == vtos || !is_wide, "wide instructions have vtos entry point only");
-  //TemplateTable::_template_tableÓÐ234¸öTemplate£¬×î¿ªÊ¼Ê±ÀïÃæµÄTemplate¶¼Ö»ÓÐÄ¬ÈÏÖµ£¬
-  //ÕâÀï»á°ÑcodeÖµµ±³É_template_tableÊý×éµÄË÷Òý£¬µÃµ½¶ÔÓ¦µÄTemplateºóÔÙ½øÐÐ³õÊ¼»¯
+  //TemplateTable::_template_tableæœ‰234ä¸ªTemplateï¼Œæœ€å¼€å§‹æ—¶é‡Œé¢çš„Templateéƒ½åªæœ‰é»˜è®¤å€¼ï¼Œ
+  //è¿™é‡Œä¼šæŠŠcodeå€¼å½“æˆ_template_tableæ•°ç»„çš„ç´¢å¼•ï¼Œå¾—åˆ°å¯¹åº”çš„TemplateåŽå†è¿›è¡Œåˆå§‹åŒ–
   Template* t = is_wide ? template_for_wide(code) : template_for(code);
   // setup entry
   t->initialize(flags, in, out, gen, arg);

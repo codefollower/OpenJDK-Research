@@ -1061,9 +1061,9 @@ void ttyLocker::break_tty_lock_for_safepoint(intx holder) {
 
 void ostream_init() {
   if (defaultStream::instance == NULL) {
-	//»áÏÈµ÷ÓÃshare\vm\memory\allocation.cppµÄ
+	//ä¼šå…ˆè°ƒç”¨share\vm\memory\allocation.cppçš„
 	//ResourceObj::operator new(size_t size, allocation_type type, MEMFLAGS flags)
-	//TODO size²ÎÊıÊÇÔõÃ´´«¹ıÈ¥µÄ£¿ÕâÀïÃ»ÓĞ´«°¡
+	//sizeå‚æ•°æ˜¯æ€ä¹ˆä¼ è¿‡å»çš„ï¼Ÿè¿™é‡Œæ²¡æœ‰ä¼ å•Š(sizeå‚æ•°æ˜¯è‡ªåŠ¨ä¼ è¿‡å»çš„ï¼Œç›¸å½“äºsizeofæ“ä½œï¼Œè¿™æ˜¯C++çš„éšå¼è§„åˆ™)
     defaultStream::instance = new(ResourceObj::C_HEAP, mtInternal) defaultStream();
     tty = defaultStream::instance;
 

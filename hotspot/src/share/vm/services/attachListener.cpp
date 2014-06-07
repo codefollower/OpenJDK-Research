@@ -130,7 +130,7 @@ static jint data_dump(AttachOperation* op, outputStream* out) {
 // Implementation of "threaddump" command - essentially a remote ctrl-break
 // See also: ThreadDumpDCmd class
 //
-static jint thread_dump(AttachOperation* op, outputStream* out) { //ÔÚÃüÁîĞĞ´°¿ÚÔËĞĞjstack <pid>¿Éµ÷ÊÔÕâ¸ö·½·¨
+static jint thread_dump(AttachOperation* op, outputStream* out) { //åœ¨å‘½ä»¤è¡Œçª—å£è¿è¡Œjstack <pid>å¯è°ƒè¯•è¿™ä¸ªæ–¹æ³•
   bool print_concurrent_locks = false;
   if (op->arg(0) != NULL && strcmp(op->arg(0), "-l") == 0) {
     print_concurrent_locks = true;
