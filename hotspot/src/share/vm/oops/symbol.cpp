@@ -32,6 +32,7 @@
 #include "memory/allocation.inline.hpp"
 #include "memory/resourceArea.hpp"
 
+//只有在c_heap分配时refcount才是1，参见SymbolTable::allocate_symbol
 Symbol::Symbol(const u1* name, int length, int refcount) {
   _refcount = refcount;
   _length = length;

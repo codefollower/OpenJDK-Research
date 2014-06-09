@@ -64,6 +64,8 @@ class CPSlot VALUE_OBJ_CLASS_SPEC {
  public:
   CPSlot(intptr_t ptr): _ptr(ptr) {}
   CPSlot(Klass* ptr): _ptr((intptr_t)ptr) {}
+  //因为Symbol* ptr的地址总是2的平方，所以最后一位总是0，所以可以用最后一位是否是1来描述是resolved还是unresolved
+  //为什么Symbol* ptr的地址总是2的平，见SymbolTable::allocate_symbol
   CPSlot(Symbol* ptr): _ptr((intptr_t)ptr | 1) {}
 
   intptr_t value()   { return _ptr; }
@@ -736,7 +738,7 @@ class ConstantPool : public Metadata {
   }
 
   // Sizing (in words)
-  static int header_size()             { return sizeof(ConstantPool)/HeapWordSize; }
+  static int header_size()             { return sizeof(ConstantPool)/HeapWordSize; } //返回12个words
   static int size(int length)          { return align_object_size(header_size() + length); }
   int size() const                     { return size(length()); }
 #if INCLUDE_SERVICES

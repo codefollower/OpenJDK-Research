@@ -1271,7 +1271,7 @@ void visit_all_interfaces(Array<Klass*>* transitive_intf, InterfaceVisiterClosur
 
 class CountInterfacesClosure : public InterfaceVisiterClosure {
  private:
-  int _nof_methods;
+  int _nof_methods; //nof是number_of的缩写
   int _nof_interfaces;
  public:
    CountInterfacesClosure() { _nof_methods = 0; _nof_interfaces = 0; }

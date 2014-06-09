@@ -163,6 +163,7 @@ class AccessFlags VALUE_OBJ_CLASS_SPEC {
     assert((flags & JVM_ACC_FIELD_FLAGS) == flags, "only recognized flags");
     _flags = (flags & JVM_ACC_FIELD_FLAGS);
   }
+  //JVM_ACC_WRITTEN_FLAGS是0x00007FFF, 为什么是0x00007FFF，因为JVM规范里定义的所有Flag的值都没有到0x8000
   void set_flags(jint flags)            { _flags = (flags & JVM_ACC_WRITTEN_FLAGS); }
 
   void set_queued_for_compilation()    { atomic_set_bits(JVM_ACC_QUEUED); }

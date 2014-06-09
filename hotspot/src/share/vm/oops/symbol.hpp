@@ -118,7 +118,7 @@ class Symbol : private SymbolBase {
   friend class SymbolTable;
   friend class MoveSymbols;
  private:
-  jbyte _body[1];
+  jbyte _body[1]; //这里的1并不是数组的实际长度，而是在operator new中按参数len确定
 
   enum {
     // max_symbol_length is constrained by type of _length

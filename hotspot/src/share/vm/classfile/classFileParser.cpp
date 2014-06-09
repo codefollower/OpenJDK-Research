@@ -427,6 +427,8 @@ constantPoolHandle ClassFileParser::parse_constant_pool(TRAPS) {
         break;
       case JVM_CONSTANT_MethodHandle :
         {
+          //对应<<jvms8>>4.4.8 The CONSTANT_MethodHandle_info Structure，
+          //不包含该小节中最后两段文字，而是在下面的第二个验证阶段处理
           int ref_index = cp->method_handle_index_at(index);
           check_property(
             valid_cp_range(ref_index, length) &&
@@ -603,6 +605,8 @@ constantPoolHandle ClassFileParser::parse_constant_pool(TRAPS) {
         break;
       }
       case JVM_CONSTANT_MethodHandle: {
+    	//对应<<jvms8>>4.4.8 The CONSTANT_MethodHandle_info Structure最后两段文字，
+    	//但是跟规范有出入，少了REF_invokeInterface)，没有处理<clinit>
         int ref_index = cp->method_handle_index_at(index);
         int ref_kind  = cp->method_handle_ref_kind_at(index);
         switch (ref_kind) {
@@ -621,7 +625,7 @@ constantPoolHandle ClassFileParser::parse_constant_pool(TRAPS) {
                   name_ref_index, CHECK_(nullHandle));
               }
             } else {
-              if (name == vmSymbols::object_initializer_name()) {
+              if (name == vmSymbols::object_initializer_name()) { //应该多加个" || vmSymbols::class_initializer_name()"
                 classfile_parse_error(
                   "Bad method name at constant pool index %u in class file %s",
                   name_ref_index, CHECK_(nullHandle));
@@ -3739,6 +3743,7 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
   // Save the class file name for easier error message printing.
   _class_name = (name != NULL) ? name : vmSymbols::unknown_class_name();
 
+  //剩余大小必须>=8
   cfs->guarantee_more(8, CHECK_(nullHandle));  // magic, major, minor
   // Magic value
   u4 magic = cfs->get_u4_fast();
@@ -3811,7 +3816,7 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
 
   // It's important to set parsed_name *before* resolving the super class.
   // (it's used for cleanup by the caller if parsing fails)
-  parsed_name = class_name;
+  parsed_name = class_name; //光是这一条语句就会触发TempNewSymbol(Symbol *s)、operator=、~TempNewSymbol()
   // parsed_name is returned and can be used if there's an error, so add to
   // its reference count.  Caller will decrement the refcount.
   parsed_name->increment_refcount();
@@ -4610,6 +4615,10 @@ bool ClassFileParser::is_supported_version(u2 major, u2 minor) {
     (JDK_Version::is_gte_jdk16x_version() ? JAVA_6_VERSION : JAVA_1_5_VERSION);
   return (major >= JAVA_MIN_SUPPORTED_VERSION) &&
          (major <= max_version) &&
+         //比如，如果JAVA_MAX_SUPPORTED_VERSION是52，而JAVA_MAX_SUPPORTED_MINOR_VERSION是0
+         //如果major是52并且minor是1，
+         //此时major==max_version且minor>JAVA_MAX_SUPPORTED_MINOR_VERSION
+         //因此不满足下面这个条件
          ((major != max_version) ||
           (minor <= JAVA_MAX_SUPPORTED_MINOR_VERSION));
 }
