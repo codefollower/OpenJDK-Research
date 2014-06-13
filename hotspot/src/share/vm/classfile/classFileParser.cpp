@@ -516,6 +516,7 @@ constantPoolHandle ClassFileParser::parse_constant_pool(TRAPS) {
 
     for (index = 1; index < length; index++) {          // Index 0 is unused
       if (has_cp_patch_at(index)) {
+    	//不能是this_class指向的常量池索引
         guarantee_property(index != this_class_index,
                            "Illegal constant pool patch to self at %d in class file %s",
                            index, CHECK_(nullHandle));
@@ -1105,6 +1106,7 @@ Array<u2>* ClassFileParser::parse_fields(Symbol* class_name,
   *java_fields_count_ptr = length;
 
   int num_injected = 0;
+  //目前只有3个类有注入字段: java.lang.Class、java.lang.ClassLoader、java.lang.invoke.MemberName
   InjectedField* injected = JavaClasses::get_injected(class_name, &num_injected);
   int total_fields = length + num_injected;
 
@@ -1129,6 +1131,7 @@ Array<u2>* ClassFileParser::parse_fields(Symbol* class_name,
   // index. After parsing all fields, the data are copied to a permanent
   // array and any unused slots will be discarded.
   ResourceMark rm(THREAD);
+  //加1是为了放generic signature index
   u2* fa = NEW_RESOURCE_ARRAY_IN_THREAD(
              THREAD, u2, total_fields * (FieldInfo::field_slots + 1));
 
@@ -1164,6 +1167,17 @@ Array<u2>* ClassFileParser::parse_fields(Symbol* class_name,
     u2 generic_signature_index = 0;
     bool is_static = access_flags.is_static();
     FieldAnnotationCollector parsed_annotations(_loader_data);
+
+    //<<jvms8>>的Table 4.7-C中预定义了各种属性，
+    //字段级别的属性有8个:
+    //ConstantValue
+    //Synthetic
+    //Deprecated
+    //Signature
+    //RuntimeVisibleAnnotations,
+    //RuntimeInvisibleAnnotations
+    //RuntimeVisibleTypeAnnotations,
+    //RuntimeInvisibleTypeAnnotations
 
     u2 attributes_count = cfs->get_u2_fast();
     if (attributes_count > 0) {
@@ -2097,6 +2111,29 @@ methodHandle ClassFileParser::parse_method(bool is_interface,
   u1* annotation_default = NULL;
   int annotation_default_length = 0;
 
+  //<<jvms8>>的Table 4.7-C中预定义了各种属性，
+  //方法级别的属性有13个:
+	//  Code
+	//  Exceptions
+	//  AnnotationDefault
+	//  MethodParameters
+	//  Synthetic
+	//  Deprecated
+	//  Signature
+	//
+	//  RuntimeVisibleParameterAnnotations,
+	//  RuntimeInvisibleParameterAnnotations
+	//  RuntimeVisibleAnnotations,
+	//  RuntimeInvisibleAnnotations
+	//  RuntimeVisibleTypeAnnotations,
+	//  RuntimeInvisibleTypeAnnotations
+	//
+	//  Code级别的属性有4个:
+	//  LineNumberTable
+	//  LocalVariableTable
+	//  LocalVariableTypeTable
+	//  StackMapTable
+
   // Parse code and exceptions attribute
   u2 method_attributes_count = cfs->get_u2_fast();
   while (method_attributes_count--) {
@@ -2112,6 +2149,7 @@ methodHandle ClassFileParser::parse_method(bool is_interface,
     if (method_attribute_name == vmSymbols::tag_code()) {
       // Parse Code attribute
       if (_need_verify) {
+    	//native和abstract方法都不能带Code属性
         guarantee_property(
             !access_flags.is_native() && !access_flags.is_abstract(),
                         "Code attribute in native or abstract methods in class file %s",
@@ -2159,7 +2197,7 @@ methodHandle ClassFileParser::parse_method(bool is_interface,
       cfs->guarantee_more(2, CHECK_(nullHandle));  // code_attributes_count
       u2 code_attributes_count = cfs->get_u2_fast();
 
-      unsigned int calculated_attribute_length = 0;
+      unsigned int calculated_attribute_length = 0; //已经计算的长度，用于验证
 
       if (_major_version > 45 || (_major_version == 45 && _minor_version > 2)) {
         calculated_attribute_length =
@@ -2168,6 +2206,8 @@ methodHandle ClassFileParser::parse_method(bool is_interface,
         // max_stack, locals and length are smaller in pre-version 45.2 classes
         calculated_attribute_length = sizeof(u1) + sizeof(u1) + sizeof(u2);
       }
+      //method_attribute_length - calculated_attribute_length后的长度
+      //就是attribute_info attributes[attributes_count]那一部分的总长度
       calculated_attribute_length +=
         code_length +
         sizeof(exception_table_length) +
@@ -2849,6 +2889,21 @@ void ClassFileParser::parse_classfile_bootstrap_methods_attribute(u4 attribute_b
                      CHECK);
 }
 
+//<<jvms8>>的Table 4.7-C中预定义了各种属性
+//ClassFile级别的属性有12个:
+	//  SourceFile
+	//  InnerClasses
+	//  EnclosingMethod
+	//  SourceDebugExtension
+	//  BootstrapMethods
+	//  Synthetic
+	//  Deprecated
+	//  Signature
+	//
+	//  RuntimeVisibleAnnotations,
+	//  RuntimeInvisibleAnnotations
+	//  RuntimeVisibleTypeAnnotations,
+	//  RuntimeInvisibleTypeAnnotations
 void ClassFileParser::parse_classfile_attributes(ClassFileParser::ClassAnnotationCollector* parsed_annotations,
                                                  TRAPS) {
   ClassFileStream* cfs = stream();

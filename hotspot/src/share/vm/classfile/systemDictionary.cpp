@@ -107,7 +107,7 @@ void SystemDictionary::compute_java_system_loader(TRAPS) {
                          vmSymbols::void_classloader_signature(),
                          CHECK);
 
-  _java_system_loader = (oop)result.get_jobject();
+  _java_system_loader = (oop)result.get_jobject(); //就是sun/misc/Launcher$AppClassLoader
 }
 
 
@@ -1844,6 +1844,18 @@ void SystemDictionary::initialize(TRAPS) {
 }
 
 // Compact table of directions on the initialization of klasses:
+//长度是70，最后一个元素的值是0
+//例如do_klass(Object_klass,  java_lang_Object,   Pre)
+//java_lang_Object对应symbol参数，Pre对应option参数，
+//java_lang_Object在vmSymbols::VM_SYMBOL_ENUM_NAME宏扩展后是enum SID的java_lang_Object_enum，值是2，
+//而Pre是enum InitOption的枚举常量，值是0
+//SystemDictionary::CEIL_LG_OPTION_LIMIT值是4
+//wk_init_info[0]对应java_lang_Object_enum，
+//所以wk_init_info[0]= (2 << 4) | 0 = 32
+
+//wk_init_info的类型是short，一个short占16位，
+//其中低4位用来表示enum InitOption，目前enum InitOption只有5个枚举常量，所以用4位足够了
+//高12位表示enum SID，目前enum SID有667个枚举常量，而12位能表示4096个，所以也够了
 static const short wk_init_info[] = {
   #define WK_KLASS_INIT_INFO(name, symbol, option) \
     ( ((int)vmSymbols::VM_SYMBOL_ENUM_NAME(symbol) \
@@ -1854,6 +1866,9 @@ static const short wk_init_info[] = {
   0
 };
 
+//initialize_wk_klass这个方法只在initialize_wk_klasses_until调用
+//为什么要重复计算info和sid？可能是历史原因吧，initialize_wk_klass是public的，
+//可以不经过initialize_wk_klasses_until直接调用
 bool SystemDictionary::initialize_wk_klass(WKID id, int init_opt, TRAPS) {
   assert(id >= (int)FIRST_WKID && id < (int)WKID_LIMIT, "oob");
   int  info = wk_init_info[id - FIRST_WKID];
@@ -1877,6 +1892,9 @@ void SystemDictionary::initialize_wk_klasses_until(WKID limit_id, WKID &start_id
     assert(id >= (int)FIRST_WKID && id < (int)WKID_LIMIT, "oob");
     int info = wk_init_info[id - FIRST_WKID];
     int sid  = (info >> CEIL_LG_OPTION_LIMIT);
+    //right_n_bits(CEIL_LG_OPTION_LIMIT)是
+    //((CEIL_LG_OPTION_LIMIT >= BitsPerWord ? 0 : OneBit << (CEIL_LG_OPTION_LIMIT)) - 1)
+    //得到的结果就是15，相当于二进制的1111，也只是只取低4位
     int opt  = (info & right_n_bits(CEIL_LG_OPTION_LIMIT));
 
     initialize_wk_klass((WKID)id, opt, CHECK);
@@ -1886,6 +1904,8 @@ void SystemDictionary::initialize_wk_klasses_until(WKID limit_id, WKID &start_id
   start_id = limit_id;
 }
 
+//initialize_wk_klasses_through包含第一个参数(实际上是加1后再调用initialize_wk_klasses_until)
+//initialize_wk_klasses_until不包含第一个参数
 void SystemDictionary::initialize_preloaded_classes(TRAPS) {
   assert(WK_KLASS(Object_klass) == NULL, "preloaded classes should only be initialized once");
   // Preload commonly used klasses

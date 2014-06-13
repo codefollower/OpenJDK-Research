@@ -1372,7 +1372,7 @@ class java_util_concurrent_locks_AbstractOwnableSynchronizer : AllStatic {
 
 class InjectedField {
  public:
-  const SystemDictionary::WKID klass_id;
+  const SystemDictionary::WKID klass_id; //WKID 是well known id的缩写
   const vmSymbols::SID name_index;
   const vmSymbols::SID signature_index;
   const bool           may_be_java;

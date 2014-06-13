@@ -40,5 +40,5 @@ share\vm\classfile\classLoader.cpp
 
 
 应用的类一般要经过jvm.cpp中的JVM_FindClassFromBootLoader，这是由java.lang.ClassLoader触发的
-通过加-Xbootclasspath/a这样的参数，可以让应用的类由JVM类部的ClassLoader加载。
+通过加-Xbootclasspath/a这样的参数，可以让应用的类由JVM内部的ClassLoader加载。
 

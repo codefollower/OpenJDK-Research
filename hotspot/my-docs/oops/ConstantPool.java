@@ -2,7 +2,7 @@ Array<u1>*           _tags; //用来存放常量池的tag，0号下标不用，�
 
 在ClassFileParser::parse_constant_pool_entries中完成第一遍解析时
 会把_tags中原有的JVM_CONSTANT_Invalid替换为实际的tag，
-但是有两个例化:
+但是有两个例外:
 对于JVM_CONSTANT_String先用JVM_CONSTANT_StringIndex表示，
 对于JVM_CONSTANT_Class 先用JVM_CONSTANT_ClassIndex表示
 
