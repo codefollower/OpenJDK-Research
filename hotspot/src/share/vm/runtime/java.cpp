@@ -708,6 +708,8 @@ void JDK_Version::initialize() {
   assert(!_current.is_valid(), "Don't initialize twice");
 
   void *lib_handle = os::native_java_library();
+  //JDK_GetVersionInfo0在jdk\src\share\native\common\jdk_util.c中实现
+  //被编译进D:\JavaSE1.8\jre\bin\java.dll
   jdk_version_info_fn_t func = CAST_TO_FN_PTR(jdk_version_info_fn_t,
      os::dll_lookup(lib_handle, "JDK_GetVersionInfo0"));
 

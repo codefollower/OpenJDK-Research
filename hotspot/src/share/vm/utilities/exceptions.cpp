@@ -396,7 +396,7 @@ Handle Exceptions::new_exception(Thread* thread, Symbol* name,
 
 // Implementation of ExceptionMark
 
-ExceptionMark::ExceptionMark(Thread*& thread) {
+ExceptionMark::ExceptionMark(Thread*& thread) { //是对Thread*指针的引用，会改变thread参数中的值
   thread     = Thread::current();
   _thread    = thread;
   if (_thread->has_pending_exception()) {

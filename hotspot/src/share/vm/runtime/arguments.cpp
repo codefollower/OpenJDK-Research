@@ -572,14 +572,14 @@ char* SysClassPath::add_jars_to_path(char* path, const char* directory) {
 static bool atomull(const char *s, julong* result) {
   julong n = 0;
   int args_read = sscanf(s, JULONG_FORMAT, &n);
-  if (args_read != 1) {
+  if (args_read != 1) { //例如-Xmnabc，此时s是abc, args_read是0
     return false;
   }
   while (*s != '\0' && isdigit(*s)) {
     s++;
   }
   // 4705540: illegal if more characters are found after the first non-digit
-  if (strlen(s) > 1) {
+  if (strlen(s) > 1) { //例如-Xmn1024kb，数字之后只能按一个字符
     return false;
   }
   switch (*s) {
@@ -2454,6 +2454,7 @@ jint Arguments::parse_vm_init_args(const JavaVMInitArgs* args) {
   }
 
   // Parse _JAVA_OPTIONS environment variable (if present) (mimics classic VM)
+  //例如: _JAVA_OPTIONS=-XX:+TraceClassLoading -XX:+Verbose
   result = parse_java_options_environment_variable(&scp, &scp_assembly_required);
   if (result != JNI_OK) {
     return result;
@@ -2583,7 +2584,7 @@ jint Arguments::parse_each_vm_init_arg(const JavaVMInitArgs* args,
     } else if (match_option(option, "-Xrun", &tail)) {
       //例如-Xrunhprof:help，最后得到的name是hprof，options是help
       //等价于-agentlib:hprof=help
-      if (tail != NULL) {
+      if (tail != NULL) { //这个if是多余的，match_option返回true时，tail的值是一个地址，不可能为null
         const char* pos = strchr(tail, ':');
         size_t len = (pos == NULL) ? strlen(tail) : pos - tail;
         char* name = (char*)memcpy(NEW_C_HEAP_ARRAY(char, len + 1, mtInternal), tail, len);
@@ -2606,7 +2607,7 @@ jint Arguments::parse_each_vm_init_arg(const JavaVMInitArgs* args,
     // -agentlib and -agentpath
     } else if (match_option(option, "-agentlib:", &tail) ||
           (is_absolute_path = match_option(option, "-agentpath:", &tail))) {
-      if(tail != NULL) {
+      if(tail != NULL) { //这个if是多余的，同上
         const char* pos = strchr(tail, '=');
         size_t len = (pos == NULL) ? strlen(tail) : pos - tail;
         char* name = strncpy(NEW_C_HEAP_ARRAY(char, len + 1, mtInternal), tail, len);
@@ -3534,7 +3535,7 @@ jint Arguments::parse(const JavaVMInitArgs* args) {
   }
 
   // Call get_shared_archive_path() here, after possible SharedArchiveFile option got parsed.
-  SharedArchivePath = get_shared_archive_path();
+  SharedArchivePath = get_shared_archive_path(); //例如: D:\JavaSE1.8\jre\bin\hotspot\classes.jsa
   if (SharedArchivePath == NULL) {
     return JNI_ENOMEM;
   }

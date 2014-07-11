@@ -3332,7 +3332,7 @@ jint Threads::create_vm(JavaVMInitArgs* args, bool* canTryAgain) {
 
   os::init_before_ergo();
 
-  jint ergo_result = Arguments::apply_ergo();
+  jint ergo_result = Arguments::apply_ergo(); //ergo是ergonomics的简写
   if (ergo_result != JNI_OK) return ergo_result;
 
   if (PauseAtStartup) {

@@ -1,3 +1,8 @@
+jclass在HotSpot内部实际上是oop*
+jmethodID在HotSpot内部实际上是Method**
+jfieldID在HotSpot内部如果是实例字段则是uintptr_t，类字段(静态字段)则是JNIid*
+
+
 Window平台
 ---------------
 8个基本类型
@@ -70,12 +75,12 @@ _jobject
 	_JNI_IMPORT_OR_EXPORT_ jint JNICALL
 	JNI_GetCreatedJavaVMs(JavaVM **, jsize, jsize *);
 
-    //下面两个由vm回调，在本地代码中来实现，并不在jni.cpp中实现
+    //下面两个在调用System.loadLibrary的过程中回调，在本地代码中来实现，并不在jni.cpp中实现
 	JNIEXPORT jint JNICALL
-	JNI_OnLoad(JavaVM *vm, void *reserved);
+	JNI_OnLoad(JavaVM *vm, void *reserved); //在jdk\src\share\native\java\lang\ClassLoader.c的NativeLibrary_load中触发
 
 	JNIEXPORT void JNICALL
-	JNI_OnUnload(JavaVM *vm, void *reserved);
+	JNI_OnUnload(JavaVM *vm, void *reserved); //在jdk\src\share\native\java\lang\ClassLoader.c的NativeLibrary_unload中触发
 
 
 JNINativeInterface_

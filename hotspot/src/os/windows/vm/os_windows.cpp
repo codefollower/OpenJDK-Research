@@ -181,6 +181,8 @@ void os::init_system_properties_values() {
       char *bin = "\\bin";
       char home_dir[MAX_PATH];
 
+      //Windows7中可以通过"计算机->属性->高级系统设置->环境变量"来添加_ALT_JAVA_HOME_DIR变量
+      //设置完之后要重启Visual Studio才会生效
       if (!getenv("_ALT_JAVA_HOME_DIR", home_dir, MAX_PATH)) {
           os::jvm_path(home_dir, sizeof(home_dir));
           // Found the full path to jvm.dll.
@@ -1798,6 +1800,8 @@ void os::print_signal_handlers(outputStream* st, char* buf, size_t buflen) {
 static char saved_jvm_path[MAX_PATH] = {0};
 
 // Find the full path to the current module, jvm.dll
+//如果JAVA_HOME是D:\JavaSE1.8
+//返回类似这样的结果: D:\JavaSE1.8\jre\bin\hotspot\jvm.dll
 void os::jvm_path(char *buf, jint buflen) {
   // Error checking.
   if (buflen < MAX_PATH) {
@@ -4017,7 +4021,7 @@ jint os::init_2(void) {
     if (!success) UseNUMAInterleaving = false;
   }
 
-  if (initSock() != JNI_OK) {
+  if (initSock() != JNI_OK) { //只要用到Winsock或DLL首先需要调用WSAStartup
     return JNI_ERR;
   }
 
