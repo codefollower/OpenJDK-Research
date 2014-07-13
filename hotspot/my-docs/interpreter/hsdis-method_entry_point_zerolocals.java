@@ -1,6 +1,8 @@
 //对应文件: src\cpu\x86\vm\templateInterpreter_x86_32.cpp
 //对应方法: 1401行的InterpreterGenerator::generate_normal_entry(bool synchronized)
+
 测试:
+---------------
     public static void main(String[] args) {
         int i = 0;
         i++;
@@ -12,6 +14,8 @@
         i++;
     }
 
+javap：
+---------------
 public static void main(java.lang.String[]);
   descriptor: ([Ljava/lang/String;)V
   flags: ACC_PUBLIC, ACC_STATIC
@@ -24,34 +28,57 @@ public static void main(java.lang.String[]);
        8: return
 
 
+汇编代码：
+---------------
 method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 
 //Method的内存布局
-// |------------------------------------------------------|
-// | header                                               |
-// | klass                                                |
-// |------------------------------------------------------|
-// | ConstMethod*                   (oop)                 |
-// |------------------------------------------------------|
-  0x01cbba60: mov    0x8(%ebx),%edx //一开始在call_stub前ebx指向method的地址，所以这条指令把ConstMethod的地址放到edx中
-
+/*
+	偏移  字段                         类型
+	----  ---------------              --------------------
+	0	  __vfptr                      void * *   //在超类Metadata中有虚函数，所以会有这个指针
+    4	  _valid                       int        //在超类Metadata中定义，NOT_PRODUCT环境才有
+	8	  _constMethod                 ConstMethod *
+	12	  _method_data                 MethodData *
+	16	  _method_counters             MethodCounters *
+	20	  _access_flags                AccessFlags
+	24	  _vtable_index                int
+	28	  _method_size                 unsigned short //占两字节
+	30	  _intrinsic_id                unsigned char  //占1字节
+	31	  _jfr_towrite                 unsigned char
+	32	  _caller_sensitive            unsigned char
+	33	  _force_inline                unsigned char
+	34	  _hidden                      unsigned char
+	35	  _dont_inline                 unsigned char
+	36	  _compiled_invocation_count   int
+	40	  _i2i_entry                   unsigned char *
+	44	  _adapter                     AdapterHandlerEntry *
+	48	  _from_compiled_entry         unsigned char * volatile
+	52	  _code                        nmethod * volatile
+	56	  _from_interpreted_entry      unsigned char * volatile
+*/
+  0x01cbba60: mov    0x8(%ebx),%edx //执行call_stub后ebx指向method的地址，所以这条指令把ConstMethod的地址放到edx中
 
 //ConstMethod的内存布局
-// |------------------------------------------------------|
-// | fingerprint 1                                        |
-// | fingerprint 2                                        |
-// | constants                      (oop)                 |
-// | stackmap_data                  (oop)                 |
-// | constMethod_size                                     |
-// | interp_kind  | flags    | code_size                  |
-// | name index              | signature index            |
-// | method_idnum            | max_stack                  |
-// | max_locals              | size_of_parameters         |
-// |------------------------------------------------------|
-
-  0x01cbba63: movzwl 0x22(%edx),%ecx //size_of_parameters 取低16位，就是一个字
-  0x01cbba67: movzwl 0x20(%edx),%edx //max_stack
-  0x01cbba6b: sub    %ecx,%edx //max_stack - size_of_parameters，相当于除了方法参数以外最大的局部变量slot是多少
+/*
+	偏移  字段                   类型
+	----  ---------------        --------------------
+	0	  _fingerprint           volatile unsigned __int64，占了８个字节
+    8	  _constants             ConstantPool *
+	12	  _stackmap_data         Array<unsigned char> *
+	16	  _constMethod_size      int
+	20	  _flags                 unsigned short
+	22	  _code_size             unsigned short
+	24	  _name_index            unsigned short
+	26	  _signature_index       unsigned short
+	28	  _method_idnum          unsigned short
+	30	  _max_stack             unsigned short
+	32	  _max_locals            unsigned short
+	34	  _size_of_parameters    unsigned short
+*/
+  0x01cbba63: movzwl 0x22(%edx),%ecx //_size_of_parameters
+  0x01cbba67: movzwl 0x20(%edx),%edx //_max_locals
+  0x01cbba6b: sub    %ecx,%edx //_max_locals - _size_of_parameters，相当于除了方法参数以外最大的局部变量slot是多少
 
   //----------begin void InterpreterGenerator::generate_stack_overflow_check(void)----------
 	  0x01cbba6d: cmp    $0x3f6,%edx
@@ -104,7 +131,7 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
   // get return address
   0x01cbbaf3: pop    %eax
   // compute beginning of parameters (rdi)
-  0x01cbbaf4: lea    -0x4(%esp,%ecx,4),%edi
+  0x01cbbaf4: lea    -0x4(%esp,%ecx,4),%edi //让edi指向第一个参数的位置
   // rdx - # of additional locals
   // allocate space for locals
   // explicitly initialize locals
@@ -114,21 +141,50 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
   0x01cbbb05: dec    %edx
   0x01cbbb06: jg     0x01cbbb00
 
+  //执行完上面５条指令和下面的那条push   %eax后的堆栈如下:
+	  //    [ return_from_Java     ] <--- rsp
+	  //    [ 0                    ] 总共_max_locals - _size_of_parameters个0
+	  //      ...
+	  //    [ 0                    ]
+	  //    [ 0                    ]
+	  //    [ argument word n      ]
+	  //      ...
+	  // -N [ argument word 1      ]
+	  // -7 [ Possible padding for stack alignment ]
+	  // -6 [ Possible padding for stack alignment ]
+	  // -5 [ Possible padding for stack alignment ]
+	  // -4 [ mxcsr save           ] <--- rsp_after_call
+	  // -3 [ saved rbx,            ]
+	  // -2 [ saved rsi            ]
+	  // -1 [ saved rdi            ]
+	  //  0 [ saved rbp,            ] <--- rbp,
+	  //  1 [ return address       ]
+	  //  2 [ ptr. to call wrapper ]
+	  //  3 [ result               ]
+	  //  4 [ result_type          ]
+	  //  5 [ method               ]
+	  //  6 [ entry_point          ]
+	  //  7 [ parameters           ]
+	  //  8 [ parameter_size       ]
+	  //  9 [ thread               ]
+
   //----------begin void TemplateInterpreterGenerator::generate_fixed_frame(bool native_call)----------
 	  0x01cbbb08: push   %eax
 	  //__ enter();
 	  0x01cbbb09: push   %ebp
 	  0x01cbbb0a: mov    %esp,%ebp
 	  // set sender sp
-	  0x01cbbb0c: push   %esi
+	  0x01cbbb0c: push   %esi //最后一个参数在堆栈中的位置
 	  0x01cbbb0d: push   $0x0
 	  0x01cbbb12: mov    0x8(%ebx),%esi  //ebx指向method, 0x8(%ebx)指向ConstMethod
-	  0x01cbbb15: lea    0x28(%esi),%esi //在这一步让%esi指向codebase，也就是method的第一个字节码的位置
+	  //0x28是40，按8字节对齐，在_size_of_parameters后有４字节全是０(用来补齐的)，
+	  //在这一步让%esi指向codebase，也就是method的第一个字节码的位置
+	  0x01cbbb15: lea    0x28(%esi),%esi
 	  0x01cbbb18: push   %ebx
 	  0x01cbbb19: push   $0x0
-	  0x01cbbb1e: mov    0x8(%ebx),%edx
-	  0x01cbbb21: mov    0x8(%edx),%edx
-	  0x01cbbb24: mov    0xc(%edx),%edx
+	  0x01cbbb1e: mov    0x8(%ebx),%edx //method
+	  0x01cbbb21: mov    0x8(%edx),%edx //ConstMethod
+	  0x01cbbb24: mov    0xc(%edx),%edx //ConstantPoolCache
 	  // set constant pool cache
 	  0x01cbbb27: push   %edx
 	  // set locals pointer
@@ -139,12 +195,12 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 	  0x01cbbb2a: push   $0x0
 	  // set expression stack bottom
 	  0x01cbbb2f: mov    %esp,(%esp)
-  //----------end void TemplateInterpreterGenerator::generate_fixed_frame(bool native_call)----------
+  //----------end   void TemplateInterpreterGenerator::generate_fixed_frame(bool native_call)----------
 
   // make sure method is not native & not abstract
-  0x01cbbb32: mov    0x14(%ebx),%eax
+  0x01cbbb32: mov    0x14(%ebx),%eax //_access_flags
 
-  0x01cbbb35: test   $0x100,%eax
+  0x01cbbb35: test   $0x100,%eax //_access_flags等于JVM_ACC_NATIVE(0x0100，在jvm.h中定义)
   0x01cbbb3a: je     0x01cbbb51
   //__ stop("tried to execute native method as non-native");
   0x01cbbb40: push   $0x55318b94
@@ -153,7 +209,7 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
   0x01cbbb4b: call   0x54dedbf0
   0x01cbbb50: hlt    
 
-  0x01cbbb51: test   $0x400,%eax
+  0x01cbbb51: test   $0x400,%eax //_access_flags等于JVM_ACC_ABSTRACT(0x0400，在jvm.h中定义)
   0x01cbbb56: je     0x01cbbb6d
   //__ stop("tried to execute abstract method in interpreter");
   0x01cbbb5c: push   $0x55318bc4
@@ -164,81 +220,93 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 
   // __ get_thread(rax);
   0x01cbbb6d: mov    %fs:0x0(,%eiz,1),%eax
-  0x01cbbb75: mov    -0xc(%eax),%eax
+  0x01cbbb75: mov    -0xc(%eax),%eax //得到thread指针
   //__ movbool(do_not_unlock_if_synchronized, true);
-  0x01cbbb78: movb   $0x1,0x1a1(%eax)
+  0x01cbbb78: movb   $0x1,0x1a1(%eax) //把thread对象的_do_not_unlock_if_synchronized字段设为true
 
   //---begin generate_counter_incr
-	  //---begin __ get_method_counters(rbx, rax, done);
-		  0x01cbbb7f: mov    0x10(%ebx),%eax
+	  //---begin get_method_counters(rbx, rax, done);
+		  0x01cbbb7f: mov    0x10(%ebx),%eax //MethodCounters指针
 		  0x01cbbb82: test   %eax,%eax
-		  0x01cbbb84: jne    0x01cbbc33
-		  //call_VM
-		  0x01cbbb8a: call   0x01cbbb94
-		  0x01cbbb8f: jmp    0x01cbbc28
-		  //pass_arg1(this, arg_1);
-		  0x01cbbb94: push   %ebx
-		  //---begin call_VM_helper
-		  0x01cbbb95: lea    0x8(%esp),%eax
-		  //---begin call_VM_base
-		  0x01cbbb99: cmpl   $0x0,-0x8(%ebp)
-		  0x01cbbba0: je     0x01cbbbb7
-		  //stop("InterpreterMacroAssembler::call_VM_base: last_sp != NULL");
-		  0x01cbbba6: push   $0x55310188
-		  0x01cbbbab: call   0x01cbbbb0
-		  0x01cbbbb0: pusha  
-		  0x01cbbbb1: call   0x54dedbf0
-		  0x01cbbbb6: hlt    
-		  //save_bcp()
-		  0x01cbbbb7: mov    %esi,-0x1c(%ebp)
-		  //MacroAssembler::call_VM_base
-		  //get_thread(java_thread);
-		  0x01cbbbba: mov    %fs:0x0(,%eiz,1),%edi
-		  0x01cbbbc2: mov    -0xc(%edi),%edi
-		  //NOT_LP64(push(java_thread); number_of_arguments++);
-		  0x01cbbbc5: push   %edi
-		  //set_last_Java_frame => if (last_java_fp->is_valid())
-		  0x01cbbbc6: mov    %ebp,0x144(%edi)
-		  0x01cbbbcc: mov    %eax,0x13c(%edi)
-		  0x01cbbbd2: call   0x5505d720
-		  0x01cbbbd7: add    $0x8,%esp
+		  //如果MethodCounters指针不为null，
+		  //则直接跳过对InterpreterRuntime::build_method_counters方法的调用，
+		  //在InterpreterRuntime::build_method_counters方法中会生成一个MethodCounters，
+		  //然后赋值给metho._method_counters字段
+		  0x01cbbb84: jne    0x01cbbc33 //ZF=0时才跳转, 也就是当%eax不为０时，%eax不为０就表示MethodCounters指针不为null
+		  //---begin call_VM
+			  0x01cbbb8a: call   0x01cbbb94
+			  0x01cbbb8f: jmp    0x01cbbc28
+			  //pass_arg1(this, arg_1);
+			  0x01cbbb94: push   %ebx
 
-		  //guarantee(java_thread != rax, "change this code");
-		  0x01cbbbda: push   %eax
-		  0x01cbbbdb: mov    %fs:0x0(,%eiz,1),%eax
-		  0x01cbbbe3: mov    -0xc(%eax),%eax
-		  0x01cbbbe6: cmp    %eax,%edi
-		  0x01cbbbe8: je     0x01cbbbff
+			  //---begin call_VM_helper
+				  0x01cbbb95: lea    0x8(%esp),%eax //reserve word for pointer to expression stack bottom对应的那个堆栈项的地址
+				  //---begin call_VM_base
+					  0x01cbbb99: cmpl   $0x0,-0x8(%ebp)
+					  0x01cbbba0: je     0x01cbbbb7
+					  //stop("InterpreterMacroAssembler::call_VM_base: last_sp != NULL");
+					  0x01cbbba6: push   $0x55310188
+					  0x01cbbbab: call   0x01cbbbb0
+					  0x01cbbbb0: pusha  
+					  0x01cbbbb1: call   0x54dedbf0
+					  0x01cbbbb6: hlt    
 
-		  //STOP("MacroAssembler::call_VM_base: rdi not callee saved?");
-		  ;; MacroAssembler::call_VM_base: rdi not callee saved?
-		  0x01cbbbee: push   $0x55312af0
-		  0x01cbbbf3: call   0x01cbbbf8
-		  0x01cbbbf8: pusha  
-		  0x01cbbbf9: call   0x54dedbf0
-		  0x01cbbbfe: hlt    
+					  //save_bcp()
+					  0x01cbbbb7: mov    %esi,-0x1c(%ebp)
+					  //---begin MacroAssembler::call_VM_base
+						  //get_thread(java_thread);
+						  0x01cbbbba: mov    %fs:0x0(,%eiz,1),%edi
+						  0x01cbbbc2: mov    -0xc(%edi),%edi
+						  //NOT_LP64(push(java_thread); number_of_arguments++);
+						  0x01cbbbc5: push   %edi
+						  //set_last_Java_frame => if (last_java_fp->is_valid())
+						  0x01cbbbc6: mov    %ebp,0x144(%edi)
+						  0x01cbbbcc: mov    %eax,0x13c(%edi)
+						  //---begin MacroAssembler::call_VM_leaf_base
+							  0x01cbbbd2: call   0x5505d720
+							  0x01cbbbd7: add    $0x8,%esp
+						  //---end   MacroAssembler::call_VM_leaf_base
 
-		  //pop(rax);
-		  0x01cbbbff: pop    %eax
-		  //reset_last_Java_frame(java_thread, true, false);
-		  0x01cbbc00: movl   $0x0,0x13c(%edi)
-		  0x01cbbc0a: movl   $0x0,0x144(%edi)
-		  // check for pending exceptions (java_thread is set upon return)
-		  0x01cbbc14: cmpl   $0x0,0x4(%edi)
-		  0x01cbbc1b: jne    0x01cb0340
-		  //---end call_VM_base
+						  //guarantee(java_thread != rax, "change this code");
+						  0x01cbbbda: push   %eax
+						  //get_thread(java_thread);
+						  0x01cbbbdb: mov    %fs:0x0(,%eiz,1),%eax
+						  0x01cbbbe3: mov    -0xc(%eax),%eax
 
-		  //restore_bcp();
-		  0x01cbbc21: mov    -0x1c(%ebp),%esi
-		  //restore_locals();
-		  0x01cbbc24: mov    -0x18(%ebp),%edi
-		  0x01cbbc27: ret    
-		  //---end call_VM_helper
+						  0x01cbbbe6: cmp    %eax,%edi
+						  0x01cbbbe8: je     0x01cbbbff
 
+						  //STOP("MacroAssembler::call_VM_base: rdi not callee saved?");
+						  ;; MacroAssembler::call_VM_base: rdi not callee saved?
+						  0x01cbbbee: push   $0x55312af0
+						  0x01cbbbf3: call   0x01cbbbf8
+						  0x01cbbbf8: pusha  
+						  0x01cbbbf9: call   0x54dedbf0
+						  0x01cbbbfe: hlt    
+
+						  //pop(rax);
+						  0x01cbbbff: pop    %eax
+						  //reset_last_Java_frame(java_thread, true, false);
+						  0x01cbbc00: movl   $0x0,0x13c(%edi)
+						  0x01cbbc0a: movl   $0x0,0x144(%edi)
+						  // check for pending exceptions (java_thread is set upon return)
+						  0x01cbbc14: cmpl   $0x0,0x4(%edi)
+						  0x01cbbc1b: jne    0x01cb0340
+					  //---end   MacroAssembler::call_VM_base
+					  
+					  //restore_bcp();
+					  0x01cbbc21: mov    -0x1c(%ebp),%esi
+					  //restore_locals();
+					  0x01cbbc24: mov    -0x18(%ebp),%edi
+				  //---end   call_VM_base
+			  //---end   call_VM_helper
+
+			  0x01cbbc27: ret
+		  //---end   call_VM
 		  0x01cbbc28: mov    0x10(%ebx),%eax
 		  0x01cbbc2b: test   %eax,%eax
 		  0x01cbbc2d: je     0x01cbbc50
-	  //---end __ get_method_counters(rbx, rax, done);
+	  //---end   get_method_counters(rbx, rax, done);
 
 	  // Update standard invocation counters
 	  0x01cbbc33: mov    0x8(%eax),%ecx
@@ -247,13 +315,14 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 
 	  // load backedge counter
 	  0x01cbbc3c: mov    0xc(%eax),%eax
+	  // mask out the status bits
 	  0x01cbbc3f: and    $0xfffffff8,%eax
 	  // add both counters
 	  0x01cbbc42: add    %eax,%ecx
 
 	  0x01cbbc44: cmp    0x55627784,%ecx
 	  0x01cbbc4a: jae    0x01cbbd29
-  //---end generate_counter_incr
+  //---end   generate_counter_incr
 
   // bang_stack_shadow_pages(false); 并且StackShadowPages=9
   0x01cbbc50: mov    %eax,-0x1000(%esp)
@@ -295,7 +364,6 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
   0x01cbbcdb: hlt    
 
   // jvmti support
-  //__ notify_method_entry();
   //---begin InterpreterMacroAssembler::notify_method_entry()
 	  //SkipIfEqual skip_if(this, &DTraceMethodProbes, 0);
 	  0x01cbbcdc: cmpb   $0x0,0x55633e5f
@@ -319,7 +387,7 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 	  //MacroAssembler::call_VM_leaf_base(address entry_point, int number_of_arguments)
 	  0x01cbbd17: call   0x552155e0
 	  0x01cbbd1c: add    $0x8,%esp
-  //---end InterpreterMacroAssembler::notify_method_entry()
+  //---end   InterpreterMacroAssembler::notify_method_entry()
 
   // __ dispatch_next(vtos);
   //从这里跳转到main方法的第一个字节码对应的汇编
@@ -327,69 +395,82 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
   0x01cbbd22: jmp    *0x55629838(,%ebx,4) //dispatch_base(state, Interpreter::dispatch_table(state));
 
 
-  //---begin void InterpreterGenerator::generate_counter_overflow(Label* do_continue)
+  //---begin generate_counter_overflow
 	  0x01cbbd29: mov    $0x0,%eax
-	  0x01cbbd2e: call   0x01cbbd38
-	  0x01cbbd33: jmp    0x01cbbdcc
-	  0x01cbbd38: push   %eax
-	  //call_VM_helper(oop_result, entry_point, 1, check_exceptions);
-	  0x01cbbd39: lea    0x8(%esp),%eax
-	  //call_VM_base(oop_result, noreg, rax, entry_point, number_of_arguments, check_exceptions);
-	  0x01cbbd3d: cmpl   $0x0,-0x8(%ebp)
-	  0x01cbbd44: je     0x01cbbd5b
-	  //stop("InterpreterMacroAssembler::call_VM_base: last_sp != NULL");
-	  0x01cbbd4a: push   $0x55310188
-	  0x01cbbd4f: call   0x01cbbd54
-	  0x01cbbd54: pusha  
-	  0x01cbbd55: call   0x54dedbf0
-	  0x01cbbd5a: hlt    
+	  //---begin call_VM
+		  0x01cbbd2e: call   0x01cbbd38
+		  0x01cbbd33: jmp    0x01cbbdcc
+		  0x01cbbd38: push   %eax
+		  //---begin call_VM_helper
+			  0x01cbbd39: lea    0x8(%esp),%eax
+			  //---begin call_VM_base
+				  0x01cbbd3d: cmpl   $0x0,-0x8(%ebp)
+				  0x01cbbd44: je     0x01cbbd5b
+				  //stop("InterpreterMacroAssembler::call_VM_base: last_sp != NULL");
+				  0x01cbbd4a: push   $0x55310188
+				  0x01cbbd4f: call   0x01cbbd54
+				  0x01cbbd54: pusha  
+				  0x01cbbd55: call   0x54dedbf0
+				  0x01cbbd5a: hlt    
 
-	  //save_bcp();
-	  0x01cbbd5b: mov    %esi,-0x1c(%ebp)
-	  //MacroAssembler::call_VM_base
-	  0x01cbbd5e: mov    %fs:0x0(,%eiz,1),%edi
-	  0x01cbbd66: mov    -0xc(%edi),%edi
-	  0x01cbbd69: push   %edi
-	  0x01cbbd6a: mov    %ebp,0x144(%edi)
-	  //set_last_Java_frame(java_thread, last_java_sp, rbp, NULL);
-	  0x01cbbd70: mov    %eax,0x13c(%edi)
-	  // MacroAssembler::call_VM_leaf_base(entry_point, number_of_arguments);
-	  0x01cbbd76: call   0x5505ce70
-	  0x01cbbd7b: add    $0x8,%esp
+				  //save_bcp();
+				  0x01cbbd5b: mov    %esi,-0x1c(%ebp)
+				  //---begin MacroAssembler::call_VM_base
+					  //get_thread(java_thread);
+					  0x01cbbd5e: mov    %fs:0x0(,%eiz,1),%edi
+					  0x01cbbd66: mov    -0xc(%edi),%edi
 
-	  //guarantee(java_thread != rax, "change this code");
-	  0x01cbbd7e: push   %eax
-	  0x01cbbd7f: mov    %fs:0x0(,%eiz,1),%eax
-	  0x01cbbd87: mov    -0xc(%eax),%eax
-	  0x01cbbd8a: cmp    %eax,%edi
-	  0x01cbbd8c: je     0x01cbbda3
-	  //STOP("MacroAssembler::call_VM_base: rdi not callee saved?");
-	  ;; MacroAssembler::call_VM_base: rdi not callee saved?
-	  0x01cbbd92: push   $0x55312af0
-	  0x01cbbd97: call   0x01cbbd9c
-	  0x01cbbd9c: pusha  
-	  0x01cbbd9d: call   0x54dedbf0
-	  0x01cbbda2: hlt    
+					  0x01cbbd69: push   %edi
+					  
+					  //set_last_Java_frame(java_thread, last_java_sp, rbp, NULL);
+					  0x01cbbd6a: mov    %ebp,0x144(%edi)
+					  0x01cbbd70: mov    %eax,0x13c(%edi)
 
-	  0x01cbbda3: pop    %eax
-	  //reset_last_Java_frame(java_thread, true, false);
-	  0x01cbbda4: movl   $0x0,0x13c(%edi)
-	  0x01cbbdae: movl   $0x0,0x144(%edi)
-	  //if (check_exceptions)
-	  0x01cbbdb8: cmpl   $0x0,0x4(%edi)
-	  0x01cbbdbf: jne    0x01cb0340
-	  //restore_bcp();
-	  0x01cbbdc5: mov    -0x1c(%ebp),%esi
-	  //restore_locals();
-	  0x01cbbdc8: mov    -0x18(%ebp),%edi
-	  //ret(0);
-	  0x01cbbdcb: ret    
+					  // MacroAssembler::call_VM_leaf_base
+					  0x01cbbd76: call   0x5505ce70
+					  0x01cbbd7b: add    $0x8,%esp
+
+					  //guarantee(java_thread != rax, "change this code");
+					  0x01cbbd7e: push   %eax
+					  //get_thread(rax);
+					  0x01cbbd7f: mov    %fs:0x0(,%eiz,1),%eax
+					  0x01cbbd87: mov    -0xc(%eax),%eax
+
+					  0x01cbbd8a: cmp    %eax,%edi
+					  0x01cbbd8c: je     0x01cbbda3
+					  //STOP("MacroAssembler::call_VM_base: rdi not callee saved?");
+					  ;; MacroAssembler::call_VM_base: rdi not callee saved?
+					  0x01cbbd92: push   $0x55312af0
+					  0x01cbbd97: call   0x01cbbd9c
+					  0x01cbbd9c: pusha  
+					  0x01cbbd9d: call   0x54dedbf0
+					  0x01cbbda2: hlt    
+
+					  0x01cbbda3: pop    %eax
+					  //reset_last_Java_frame(java_thread, true, false);
+					  0x01cbbda4: movl   $0x0,0x13c(%edi)
+					  0x01cbbdae: movl   $0x0,0x144(%edi)
+					  //if (check_exceptions)
+					  0x01cbbdb8: cmpl   $0x0,0x4(%edi)
+					  0x01cbbdbf: jne    0x01cb0340
+				  //---end   MacroAssembler::call_VM_base
+
+				  //restore_bcp();
+				  0x01cbbdc5: mov    -0x1c(%ebp),%esi
+				  //restore_locals();
+				  0x01cbbdc8: mov    -0x18(%ebp),%edi
+			  //---end   call_VM_base
+		  //---end   call_VM_helper
+
+		  0x01cbbdcb: ret    
+	  //---end   call_VM
+
 	  // restore Method*
 	  0x01cbbdcc: mov    -0xc(%ebp),%ebx
 	  // Preserve invariant that rsi/rdi contain bcp/locals of sender frame
 	  // and jump to the interpreted entry.
 	  0x01cbbdcf: jmp    0x01cbbc50
-  //---end void InterpreterGenerator::generate_counter_overflow(Label* do_continue)
+  //---end   generate_counter_overflow
 
 
   0x01cbbdd4: int3   
