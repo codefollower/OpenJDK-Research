@@ -14,13 +14,33 @@ iinc  132 iinc  [0x01cc0cc0, 0x01cc0d30]  112 bytes
   0x01cc0ce3: push   %eax
 
   //直接跳到这里
-  0x01cc0ce4: movsbl 0x2(%esi),%edx
-  0x01cc0ce8: movzbl 0x1(%esi),%ebx
-  0x01cc0cec: neg    %ebx
+  //指令格式: iinc  0, 1
+  0x01cc0ce4: movsbl 0x2(%esi),%edx //是1
+  0x01cc0ce8: movzbl 0x1(%esi),%ebx //是0 局部变量的slot位置
+      //    [ (%esp)               ] <--- rsp  //reserve word for pointer to expression stack bottom
+	  //    [ 第一个字节码内存地址 ]
+	  //    [ argument word 1 所在堆栈位置 ]
+	  //    [ ConstantPoolCache    ]
+	  //    [ 0                    ] <--- rax
+	  //    [ method               ]
+	  //    [ 0                    ]
+	  //    [ argument word n 所在堆栈位置 ]
+	  //    [ saved rbp,           ] <--- rbp,
+	  
+	  //    [ return_from_Java     ] 
+	  //    [ 0                    ] 总共_max_locals - _size_of_parameters个0
+	  //      ...
+	  //    [ 0                    ]
+	  //    [ 0                    ]
+	  //    [ argument word n      ]
+	  //      ...
+	  // -N [ argument word 1      ]
+  0x01cc0cec: neg    %ebx //edi是往下的，取负值
   0x01cc0cee: add    %edx,(%edi,%ebx,4)
-  0x01cc0cf1: movzbl 0x3(%esi),%ebx
+  0x01cc0cf1: movzbl 0x3(%esi),%ebx //iinc占用３字节
   0x01cc0cf5: add    $0x3,%esi
   0x01cc0cf8: jmp    *0x55629838(,%ebx,4)
+
 
   0x01cc0cff: mov    0x4(%esi),%edx
   0x01cc0d02: movzwl 0x2(%esi),%ebx

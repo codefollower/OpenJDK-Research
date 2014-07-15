@@ -88,9 +88,9 @@ void os::os_exception_wrapper(java_call_t f, JavaValue* value, methodHandle* met
     if ( ThreadLocalStorage::get_thread_ptr_offset() == 0 ) {
       int thread_ptr_offset;
       __asm {
-        lea eax, dword ptr wrapperthread;
-        sub eax, dword ptr FS:[0H];
-        mov thread_ptr_offset, eax
+        lea eax, dword ptr wrapperthread; //把wrapperthread的地址放到eax中
+        sub eax, dword ptr FS:[0H]; //eax的值 - FS:[0H]对应的内存中的值，然后存到eax中
+        mov thread_ptr_offset, eax //通常是偏移-12，也就是0xfffffff4(这是补码，通过按位取反加１就能得到-12)
       };
       ThreadLocalStorage::set_thread_ptr_offset(thread_ptr_offset);
     }

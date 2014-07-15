@@ -1,3 +1,28 @@
+//Method的内存布局
+/*
+	偏移(10) 偏移(16)  字段                         类型
+	----     ------    ---------------              --------------------
+	0	     0         __vfptr                      void * *   //在超类Metadata中有虚函数，所以会有这个指针
+    4        4         _valid                       int        //在超类Metadata中定义，NOT_PRODUCT环境才有
+	8	     8         _constMethod                 ConstMethod *
+	12	     C         _method_data                 MethodData *
+	16	     10        _method_counters             MethodCounters *
+	20	     14        _access_flags                AccessFlags
+	24	     18        _vtable_index                int
+	28	     1C        _method_size                 unsigned short //占两字节
+	30	     1E        _intrinsic_id                unsigned char  //占1字节
+	31	     1F        _jfr_towrite                 unsigned char
+	32	     20        _caller_sensitive            unsigned char
+	33	     21        _force_inline                unsigned char
+	34	     22        _hidden                      unsigned char
+	35	     23        _dont_inline                 unsigned char
+	36	     24        _compiled_invocation_count   int
+	40	     28        _i2i_entry                   unsigned char *
+	44	     2C        _adapter                     AdapterHandlerEntry *
+	48	     30        _from_compiled_entry         unsigned char * volatile
+	52	     34        _code                        nmethod * volatile
+	56	     38        _from_interpreted_entry      unsigned char * volatile
+*/
 
 Method的内存布局:
 ====================

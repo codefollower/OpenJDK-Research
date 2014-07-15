@@ -382,6 +382,8 @@ void Method::build_interpreter_method_data(methodHandle method, TRAPS) {
   }
 }
 
+//还好这个方法绝大多数情况下被调用时mh->method_counters()都为null
+//不然的话allocate和free_metadata都是多余的
 MethodCounters* Method::build_method_counters(Method* m, TRAPS) {
   methodHandle mh(m);
   ClassLoaderData* loader_data = mh->method_holder()->class_loader_data();

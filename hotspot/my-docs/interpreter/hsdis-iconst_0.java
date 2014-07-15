@@ -14,8 +14,8 @@ iconst_0  3 iconst_0  [0x01cbe810, 0x01cbe850]  64 bytes
   0x01cbe833: push   %eax
 
   //直接跳到这里
-  0x01cbe834: xor    %eax,%eax
-  0x01cbe836: movzbl 0x1(%esi),%ebx
+  0x01cbe834: xor    %eax,%eax //把%eax清0，%eax做为源操作数，在其它bytecode中会直接用它
+  0x01cbe836: movzbl 0x1(%esi),%ebx //下一条bytecode的值
   0x01cbe83a: inc    %esi
   0x01cbe83b: jmp    *0x55628438(,%ebx,4)
 

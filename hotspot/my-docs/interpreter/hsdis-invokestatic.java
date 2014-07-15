@@ -14,38 +14,59 @@ invokestatic  184 invokestatic  [0x01cc58f0, 0x01cc5a20]  304 bytes
   0x01cc5913: push   %eax
 
   //------------------------------------------------------------------------------------------------------------------------
-  // -7 [ %esi ] //-0x1c = -(16+12) = -28 = 4 * -7 (堆栈中每一项占4字节)
-  // -6 [ Possible padding for stack alignment ]
-  // -5 [ Possible padding for stack alignment ]
-  // -4 [ mxcsr save           ] <--- rsp_after_call
-  // -3 [ saved rbx,            ]
-  // -2 [ saved rsi            ]
-  // -1 [ saved rdi            ]
-  //  0 [ saved rbp,            ] <--- rbp,
-  //  1 [ return address       ]
-  //  2 [ ptr. to call wrapper ]
-  //  3 [ result               ]
-  //  4 [ result_type          ]
-  //  5 [ method               ]
-  //  6 [ entry_point          ]
-  //  7 [ parameters           ]
-  //  8 [ parameter_size       ]
-  //  9 [ thread               ]
+	  //  8 [ (%esp)               ] <--- rsp  //reserve word for pointer to expression stack bottom
+	  //  7 [ 第一个字节码内存地址 ]
+	  //  6 [ argument word 1 所在堆栈位置 ]
+	  //  5 [ ConstantPoolCache    ]
+	  //  4 [ 0                    ] <--- rax
+	  //  3 [ method               ]
+	  //  2 [ 0                    ]
+	  //  1 [ argument word n 所在堆栈位置 ]
+	  //  0 [ saved rbp,           ] <--- rbp,
+	  
+	  //    [ return_from_Java     ] 
+	  //    [ 0                    ] 总共_max_locals - _size_of_parameters个0
+	  //      ...
+	  //    [ 0                    ]
+	  //    [ 0                    ]
+	  //    [ argument word n      ]
+	  //      ...
+	  // -N [ argument word 1      ]
+	  // -7 [ Possible padding for stack alignment ]
+	  // -6 [ Possible padding for stack alignment ]
+	  // -5 [ Possible padding for stack alignment ]
+	  // -4 [ mxcsr save           ] <--- rsp_after_call
+	  // -3 [ saved rbx,           ]
+	  // -2 [ saved rsi            ]
+	  // -1 [ saved rdi            ]
+	  //  0 [ saved rbp,           ] <--- rbp,
+	  //  1 [ return address       ]
+	  //  2 [ ptr. to call wrapper ]
+	  //  3 [ result               ]
+	  //  4 [ result_type          ]
+	  //  5 [ method               ]
+	  //  6 [ entry_point          ]
+	  //  7 [ parameters           ]
+	  //  8 [ parameter_size       ]
+	  //  9 [ thread               ]
 
   //直接跳到这里
   0x01cc5914: mov    %esi,-0x1c(%ebp) //%esi的值是invokestatic字节码在内存中的地址
   0x01cc5917: movzwl 0x1(%esi),%edx //跟在invokestatic后的两个字节是indexbyte1、indexbyte2
-  0x01cc591b: mov    -0x14(%ebp),%ecx
+  0x01cc591b: mov    -0x14(%ebp),%ecx //ConstantPoolCache
   0x01cc591e: shl    $0x2,%edx
   0x01cc5921: mov    0x8(%ecx,%edx,4),%ebx //计算被调用方法的Methodref在常量池中的索引
   0x01cc5925: shr    $0x10,%ebx
   0x01cc5928: and    $0xff,%ebx
 
-  0x01cc592e: cmp    $0xb8,%ebx
+  0x01cc592e: cmp    $0xb8,%ebx //$0xb8是invokestatic的bytecode值, 如果%ebx的值也是$0xb8, 说明解析过了，跳过resolve_invoke
   0x01cc5934: je     0x01cc59e7
 
+
+  0x01cc593a: mov    $0xb8,%ebx //invokestatic的bytecode值先放到ebx，然后在下面的push   %ebx中先压入堆栈
+  //因为InterpreterRuntime::resolve_invoke的参数是(JavaThread* thread, Bytecodes::Code bytecode)
+  //所以在下面还有个push   %edi就是往堆栈中压入thread
   //---begin call_VM
-	  0x01cc593a: mov    $0xb8,%ebx
 	  0x01cc593f: call   0x01cc5949
 	  0x01cc5944: jmp    0x01cc59dd
 	  0x01cc5949: push   %ebx
@@ -86,8 +107,8 @@ invokestatic  184 invokestatic  [0x01cc58f0, 0x01cc5a20]  304 bytes
 	  0x01cc59dc: ret    
   //---end   call_VM
 
+  //跟上面相同
   0x01cc59dd: movzwl 0x1(%esi),%edx //get_cache_index_at_bcp
-
   0x01cc59e1: mov    -0x14(%ebp),%ecx
   0x01cc59e4: shl    $0x2,%edx
 
@@ -97,10 +118,19 @@ invokestatic  184 invokestatic  [0x01cc58f0, 0x01cc5a20]  304 bytes
   0x01cc59f2: mov    0x556277cc(,%edx,4),%edx // load return address
   0x01cc59f9: push   %edx // push return address
 
+	  //    [ (%esp)               ] <--- rsp  //reserve word for pointer to expression stack bottom
+	  //    [ 第一个字节码内存地址 ]
+	  //    [ argument word 1 所在堆栈位置 ]
+	  //    [ ConstantPoolCache    ]
+	  //    [ 0                    ] <--- rax
+	  //    [ method               ]
+	  //    [ (%esp)               ] <--- mov    %esi,-0x8(%ebp)
+	  //    [ argument word n 所在堆栈位置 ]
+	  //    [ saved rbp,           ] <--- rbp,
   //jump_from_interpreted
   0x01cc59fa: lea    0x4(%esp),%esi
   0x01cc59fe: mov    %esi,-0x8(%ebp)
-  0x01cc5a01: jmp    *0x34(%ebx)
+  0x01cc5a01: jmp    *0x34(%ebx) //Method._from_interpreted_entry 重新转到method entry point (kind = zerolocals)
 
   //下面的对应TemplateInterpreterGenerator::generate_and_dispatch的should_not_reach_here();
   0x01cc5a04: push   $0x552fd97c

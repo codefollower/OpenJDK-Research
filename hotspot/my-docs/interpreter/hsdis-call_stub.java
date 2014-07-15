@@ -53,7 +53,7 @@ StubRoutines::call_stub [0x01dc03b4, 0x01dc0485[ (209 bytes)
   0x01dc03d5: and    $0xffc0,%eax
   0x01dc03db: cmp    0x56005778,%eax
   0x01dc03e1: je     0x01dc03ee
-  0x01dc03e7: ldmxcsr 0x56005778
+  0x01dc03e7: ldmxcsr 0x56005778 //如果0x56005778(在数据段)中的值与%eax中的值不同，则把0x56005778中的值保存到mxcsr寄存器
 
   //对应CTRL寄存器
   0x01dc03ee: fldcw  0x56005768 //Loads the 16-bit source operand into the FPU control word.
@@ -77,6 +77,18 @@ StubRoutines::call_stub [0x01dc03b4, 0x01dc0485[ (209 bytes)
   0x01dc0423: xor    %ebx,%ebx //把%ebx设为0
 
   //从后往前遍历参数，然后放到堆栈中
+  //parameters是个数组，所以parameters的内存地址就是第一个数组元素的地址，
+  //第i(i>=0)个元素的地址 = parameters的内存地址 + i*4
+  //因为%ecx是parameter_size, 按%ecx递减时算出的地址是多了４个字节的，所以要减去4，
+  //比如parameters的内存地址是0x11223300，有3个数组元素，
+  //那么每个数组元素的内存地址分别是
+  //parameters[0] = 0x11223300 = parameters的内存地址 = %edx的值
+  //parameters[1] = 0x11223304
+  //parameters[2] = 0x11223308
+  //此时%ecx = 3
+  //从后往前遍历参数时，先计算第三个元素的内存地址
+  //parameters[2] = %edx + %ecx*4 - 0x4 =  0x11223300 + 12 - 0x4 = 0x11223308
+  //最后再把0x11223308中存放的值放到%eax
   ;; loop:
   0x01dc0425: mov    -0x4(%edx,%ecx,4),%eax
   0x01dc0429: mov    %eax,(%esp,%ebx,4)

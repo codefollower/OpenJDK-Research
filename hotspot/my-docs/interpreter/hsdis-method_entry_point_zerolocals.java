@@ -37,7 +37,7 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 	偏移  字段                         类型
 	----  ---------------              --------------------
 	0	  __vfptr                      void * *   //在超类Metadata中有虚函数，所以会有这个指针
-    4	  _valid                       int        //在超类Metadata中定义，NOT_PRODUCT环境才有
+    4     _valid                       int        //在超类Metadata中定义，NOT_PRODUCT环境才有
 	8	  _constMethod                 ConstMethod *
 	12	  _method_data                 MethodData *
 	16	  _method_counters             MethodCounters *
@@ -61,27 +61,27 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 
 //ConstMethod的内存布局
 /*
-	偏移  字段                   类型
-	----  ---------------        --------------------
-	0	  _fingerprint           volatile unsigned __int64，占了８个字节
-    8	  _constants             ConstantPool *
-	12	  _stackmap_data         Array<unsigned char> *
-	16	  _constMethod_size      int
-	20	  _flags                 unsigned short
-	22	  _code_size             unsigned short
-	24	  _name_index            unsigned short
-	26	  _signature_index       unsigned short
-	28	  _method_idnum          unsigned short
-	30	  _max_stack             unsigned short
-	32	  _max_locals            unsigned short
-	34	  _size_of_parameters    unsigned short
+	偏移(10) 偏移(16)  字段                   类型
+	----     ------    --------        --------------------
+	0	     0         _fingerprint           volatile unsigned __int64，占了８个字节
+    8        8         _constants             ConstantPool *
+	12	     C         _stackmap_data         Array<unsigned char> *
+	16	     10        _constMethod_size      int
+	20	     14        _flags                 unsigned short
+	22	     16        _code_size             unsigned short
+	24	     18        _name_index            unsigned short
+	26	     1A        _signature_index       unsigned short
+	28	     1C        _method_idnum          unsigned short
+	30	     1E        _max_stack             unsigned short
+	32	     20        _max_locals            unsigned short
+	34	     22        _size_of_parameters    unsigned short
 */
   0x01cbba63: movzwl 0x22(%edx),%ecx //_size_of_parameters
   0x01cbba67: movzwl 0x20(%edx),%edx //_max_locals
   0x01cbba6b: sub    %ecx,%edx //_max_locals - _size_of_parameters，相当于除了方法参数以外最大的局部变量slot是多少
 
   //----------begin void InterpreterGenerator::generate_stack_overflow_check(void)----------
-	  0x01cbba6d: cmp    $0x3f6,%edx
+	  0x01cbba6d: cmp    $0x3f6,%edx //检查_max_locals - _size_of_parameters是否超过$0x3f6
 	  0x01cbba73: jbe    0x01cbbaf3
 
 	  0x01cbba79: push   %esi
@@ -126,7 +126,7 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 	  // Use the shared runtime version of the StackOverflowError.
 	  0x01cbbaed: jmp    0x01cb2890
 	  0x01cbbaf2: pop    %esi
-  //----------end void InterpreterGenerator::generate_stack_overflow_check(void)----------
+  //----------end   void InterpreterGenerator::generate_stack_overflow_check(void)----------
 
   // get return address
   0x01cbbaf3: pop    %eax
@@ -182,9 +182,9 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 	  0x01cbbb15: lea    0x28(%esi),%esi
 	  0x01cbbb18: push   %ebx
 	  0x01cbbb19: push   $0x0
-	  0x01cbbb1e: mov    0x8(%ebx),%edx //method
-	  0x01cbbb21: mov    0x8(%edx),%edx //ConstMethod
-	  0x01cbbb24: mov    0xc(%edx),%edx //ConstantPoolCache
+	  0x01cbbb1e: mov    0x8(%ebx),%edx //ConstMethod *
+	  0x01cbbb21: mov    0x8(%edx),%edx //ConstantPool *
+	  0x01cbbb24: mov    0xc(%edx),%edx //ConstantPoolCache *
 	  // set constant pool cache
 	  0x01cbbb27: push   %edx
 	  // set locals pointer
@@ -220,9 +220,47 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 
   // __ get_thread(rax);
   0x01cbbb6d: mov    %fs:0x0(,%eiz,1),%eax
-  0x01cbbb75: mov    -0xc(%eax),%eax //得到thread指针
+  0x01cbbb75: mov    -0xc(%eax),%eax //得到thread指针 //为什么要减12, 见os::os_exception_wrapper
   //__ movbool(do_not_unlock_if_synchronized, true);
   0x01cbbb78: movb   $0x1,0x1a1(%eax) //把thread对象的_do_not_unlock_if_synchronized字段设为true
+
+
+	　//执行完上面的汇编代码后，此时的堆栈如下
+		  //    [ (%esp)               ] <--- rsp  //reserve word for pointer to expression stack bottom
+		  //    [ 第一个字节码内存地址 ]
+		  //    [ argument word 1 所在堆栈位置 ]
+		  //    [ ConstantPoolCache    ]
+		  //    [ 0                    ]
+		  //    [ method               ]
+		  //    [ 0                    ]
+		  //    [ argument word n 所在堆栈位置 ]
+		  //    [ saved rbp,           ] <--- rbp,
+		  
+		  //    [ return_from_Java     ] 
+		  //    [ 0                    ] 总共_max_locals - _size_of_parameters个0
+		  //      ...
+		  //    [ 0                    ]
+		  //    [ 0                    ]
+		  //    [ argument word n      ]
+		  //      ...
+		  // -N [ argument word 1      ]
+		  // -7 [ Possible padding for stack alignment ]
+		  // -6 [ Possible padding for stack alignment ]
+		  // -5 [ Possible padding for stack alignment ]
+		  // -4 [ mxcsr save           ] <--- rsp_after_call
+		  // -3 [ saved rbx,           ]
+		  // -2 [ saved rsi            ]
+		  // -1 [ saved rdi            ]
+		  //  0 [ saved rbp,           ] <--- rbp,
+		  //  1 [ return address       ]
+		  //  2 [ ptr. to call wrapper ]
+		  //  3 [ result               ]
+		  //  4 [ result_type          ]
+		  //  5 [ method               ]
+		  //  6 [ entry_point          ]
+		  //  7 [ parameters           ]
+		  //  8 [ parameter_size       ]
+		  //  9 [ thread               ]
 
   //---begin generate_counter_incr
 	  //---begin get_method_counters(rbx, rax, done);
@@ -236,8 +274,11 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 		  //---begin call_VM
 			  0x01cbbb8a: call   0x01cbbb94
 			  0x01cbbb8f: jmp    0x01cbbc28
+
+			  //为调用调用InterpreterRuntime::build_method_counters(JavaThread* thread, Method* m)
+			  //先把method指针压入堆栈
 			  //pass_arg1(this, arg_1);
-			  0x01cbbb94: push   %ebx
+			  0x01cbbb94: push   %ebx，
 
 			  //---begin call_VM_helper
 				  0x01cbbb95: lea    0x8(%esp),%eax //reserve word for pointer to expression stack bottom对应的那个堆栈项的地址
@@ -252,7 +293,7 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 					  0x01cbbbb6: hlt    
 
 					  //save_bcp()
-					  0x01cbbbb7: mov    %esi,-0x1c(%ebp)
+					  0x01cbbbb7: mov    %esi,-0x1c(%ebp) //放到[ 第一个字节码内存地址 ]那个堆栈项，其实跟%esi中的值是一样
 					  //---begin MacroAssembler::call_VM_base
 						  //get_thread(java_thread);
 						  0x01cbbbba: mov    %fs:0x0(,%eiz,1),%edi
@@ -260,9 +301,11 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 						  //NOT_LP64(push(java_thread); number_of_arguments++);
 						  0x01cbbbc5: push   %edi
 						  //set_last_Java_frame => if (last_java_fp->is_valid())
-						  0x01cbbbc6: mov    %ebp,0x144(%edi)
-						  0x01cbbbcc: mov    %eax,0x13c(%edi)
+						  0x01cbbbc6: mov    %ebp,0x144(%edi) //对应((thread)->_anchor)._last_Java_fp
+						  0x01cbbbcc: mov    %eax,0x13c(%edi) //对应((thread)->_anchor)._last_Java_sp
 						  //---begin MacroAssembler::call_VM_leaf_base
+						      //调用InterpreterRuntime::build_method_counters(JavaThread* thread, Method* m)
+							  //此时堆栈栈顶的两项刚好是thread和method
 							  0x01cbbbd2: call   0x5505d720
 							  0x01cbbbd7: add    $0x8,%esp
 						  //---end   MacroAssembler::call_VM_leaf_base
@@ -287,10 +330,10 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 						  //pop(rax);
 						  0x01cbbbff: pop    %eax
 						  //reset_last_Java_frame(java_thread, true, false);
-						  0x01cbbc00: movl   $0x0,0x13c(%edi)
-						  0x01cbbc0a: movl   $0x0,0x144(%edi)
+						  0x01cbbc00: movl   $0x0,0x13c(%edi) //对应((thread)->_anchor)._last_Java_sp
+						  0x01cbbc0a: movl   $0x0,0x144(%edi) //对应((thread)->_anchor)._last_Java_fp
 						  // check for pending exceptions (java_thread is set upon return)
-						  0x01cbbc14: cmpl   $0x0,0x4(%edi)
+						  0x01cbbc14: cmpl   $0x0,0x4(%edi) //对应_pending_exception
 						  0x01cbbc1b: jne    0x01cb0340
 					  //---end   MacroAssembler::call_VM_base
 					  
@@ -304,22 +347,39 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 			  0x01cbbc27: ret
 		  //---end   call_VM
 		  0x01cbbc28: mov    0x10(%ebx),%eax
-		  0x01cbbc2b: test   %eax,%eax
+		  0x01cbbc2b: test   %eax,%eax //如查MethodCounters指针还是null，那么就跳过计数更新
 		  0x01cbbc2d: je     0x01cbbc50
 	  //---end   get_method_counters(rbx, rax, done);
 
+		//MethodCounters的内存布局
+		/*
+			偏移  字段                           类型
+			----  ---------------                --------------------
+			0	  _interpreter_invocation_count  int
+			4	  _interpreter_throwout_count    unsigned short
+			6	  _number_of_breakpoints         unsigned short
+			8	  _invocation_counter._counter   unsigned int
+			12	  _backedge_counter._counter     unsigned int
+		*/
 	  // Update standard invocation counters
-	  0x01cbbc33: mov    0x8(%eax),%ecx
+	  0x01cbbc33: mov    0x8(%eax),%ecx //_invocation_counter._counter
 	  0x01cbbc36: add    $0x8,%ecx
 	  0x01cbbc39: mov    %ecx,0x8(%eax)
 
 	  // load backedge counter
-	  0x01cbbc3c: mov    0xc(%eax),%eax
+	  0x01cbbc3c: mov    0xc(%eax),%eax //_backedge_counter._counter
 	  // mask out the status bits
+	  //InvocationCounter的格式
+	  // bit no: |31  3|  2  | 1 0 |
+      // format: [count|carry|state]
+	  //所以要屏蔽掉后三位carry|state
 	  0x01cbbc3f: and    $0xfffffff8,%eax
 	  // add both counters
+	  //累计_invocation_counter+_backedge_counter, 
+	  //注意这里只是更新ecx，并不会写回_invocation_counter
 	  0x01cbbc42: add    %eax,%ecx
 
+　　　//是否超过InvocationCounter::InterpreterInvocationLimit，超过的话就当overflow处理
 	  0x01cbbc44: cmp    0x55627784,%ecx
 	  0x01cbbc4a: jae    0x01cbbd29
   //---end   generate_counter_incr
@@ -353,7 +413,7 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
   0x01cbbcbf: hlt    
 
   // start execution *****************非常重要*****************
-  0x01cbbcc0: mov    -0x20(%ebp),%eax
+  0x01cbbcc0: mov    -0x20(%ebp),%eax //看看[ (%esp)               ]堆栈项中的值与esp是否一样
   0x01cbbcc3: cmp    %esp,%eax
   0x01cbbcc5: je     0x01cbbcdc
   //__ stop("broken stack frame setup in interpreter");
@@ -392,6 +452,7 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
   // __ dispatch_next(vtos);
   //从这里跳转到main方法的第一个字节码对应的汇编
   0x01cbbd1f: movzbl (%esi),%ebx //%esi的值是第一条字节码在内存中的地址，(%esi)就是第一条字节码
+  //在VS中打断点时按"22 jmp"找
   0x01cbbd22: jmp    *0x55629838(,%ebx,4) //dispatch_base(state, Interpreter::dispatch_table(state));
 
 
