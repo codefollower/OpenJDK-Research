@@ -54,8 +54,8 @@ invokestatic  184 invokestatic  [0x01cc58f0, 0x01cc5a20]  304 bytes
   0x01cc5914: mov    %esi,-0x1c(%ebp) //%esi的值是invokestatic字节码在内存中的地址
   0x01cc5917: movzwl 0x1(%esi),%edx //跟在invokestatic后的两个字节是indexbyte1、indexbyte2
   0x01cc591b: mov    -0x14(%ebp),%ecx //ConstantPoolCache
-  0x01cc591e: shl    $0x2,%edx
-  0x01cc5921: mov    0x8(%ecx,%edx,4),%ebx //计算被调用方法的Methodref在常量池中的索引
+  0x01cc591e: shl    $0x2,%edx //看后面的长篇注释
+  0x01cc5921: mov    0x8(%ecx,%edx,4),%ebx //计算ConstantPoolCacheEntry._indices字段的值
   0x01cc5925: shr    $0x10,%ebx
   0x01cc5928: and    $0xff,%ebx
 
@@ -226,3 +226,64 @@ invokestatic  184 invokestatic  [0x01cc58f0, 0x01cc5a20]  304 bytes
 	01F75A1D  int         3  
 	01F75A1E  int         3  
 	01F75A1F  int         3 
+
+
+
+上面提的movzwl 0x1(%esi),%edx不是javap打印出来的那个invokespecial中的#XXX，
+这个index是在Rewriter阶段重写过的，  
+ConstantPoolCacheEntry:_indices字段的格式是
+// bit number |31                0|  
+// bit length |-8--|-8--|---16----|  
+// --------------------------------  
+// _indices   [ b2 | b1 |  index  ]  
+
+
+里面最后16bit的index才是真的#XXX。
+
+
+上面连续的这5条汇编mov、shr、and、cmp、je是取出ConstantPoolCacheEntry::_indices字段中的b1部分，
+如果b1的值刚好等于invokestatic，就说明解析过了。
+
+最后，为啥要乘以4呢? 
+
+在32位系统上面实际的汇编是
+shl    $0x2,%edx  
+mov    0x8(%ecx,%edx,4),%ebx //这里的4代表ConstantPoolCacheEntry每个字段的字节数  
+shr    $0x10,%ebx  
+and    $0xff,%ebx  
+  
+cmp    $0xb7,%ebx  
+je     0x01cc5897  
+
+
+乘以4,是因为每个ConstantPoolCacheEntry刚好有4个字段，每个字段占用的字节数刚好又一样，都是4，
+加8是因为ConstantPoolCache类的_length和_constant_pool占了8个字节，
+
+所以对于第0个ConstantPoolCacheEntry::_indices字段的地址就是:
+ConstantPoolCache的地址 + 8 + (0*4)*4，
+其实就是: ConstantPoolCache的地址 + 8
+
+第1个ConstantPoolCacheEntry::_indices字段的地址就是:
+ConstantPoolCache的地址 + 8 + (1*4)*4 
+(这里的1*4就是上面的shl $0x2,%edx，因为多了前面的第0个ConstantPoolCacheEntry）
+
+
+第2个ConstantPoolCacheEntry::_indices字段的地址就是:
+ConstantPoolCache的地址 + 8 + (2*4)*4 
+(这里的2*4是因为多了前面的第0、1个ConstantPoolCacheEntry）
+
+依此类推……
+
+所以_indices字段的地址计算公式就是:
+
+第i个_indices字段的地址 = ConstantPoolCache的地址 + 8 + (i * 4) * 4 
+(其中i>=0，第一个4代表ConstantPoolCacheEntry有4个字段，第二个4代表ConstantPoolCacheEntry每个字段都占用4字节)
+
+invokespecial的汇编代码在后面还有
+mov    0xc(%ecx,%edx,4),%ebx //ConstantPoolCacheEntry::_f1字段(其实是method指针)  
+mov    0x14(%ecx,%edx,4),%edx //ConstantPoolCacheEntry::_flags字段  
+
+0xc是因为_f1字段在_indices字段后面，偏移多了4个字节，
+0x14是因为_flags字段在_indices字段后面，偏移多了12个字节。
+
+

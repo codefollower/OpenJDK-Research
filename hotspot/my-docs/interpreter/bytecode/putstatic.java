@@ -92,33 +92,33 @@ putstatic  179 putstatic  [0x01cc5000, 0x01cc5210]  528 bytes
 	  0x01cc50f4: mov    0x10(%ecx,%edx,4),%ebx // Field offset
 	  0x01cc50f8: mov    0x14(%ecx,%edx,4),%eax // Flags
 	  0x01cc50fc: mov    0xc(%ecx,%edx,4),%ecx  // klass overwrite register
-	  0x01cc5100: mov    0x3c(%ecx),%ecx
+	  0x01cc5100: mov    0x3c(%ecx),%ecx //klass._java_mirror
   //---end   TemplateTable::load_field_cp_cache_entry
 
   0x01cc5103: mov    %eax,%edx
   0x01cc5105: shr    $0x15,%edx
-  0x01cc5108: and    $0x1,%edx
+  0x01cc5108: and    $0x1,%edx //field is volatile
 
-  0x01cc510b: shr    $0x1c,%eax
+  0x01cc510b: shr    $0x1c,%eax //tos
   0x01cc510e: and    $0xf,%eax
   0x01cc5111: jne    0x01cc5120
 
-  0x01cc5117: pop    %eax
+  // btos
+  0x01cc5117: pop    %eax //操作数
   0x01cc5118: mov    %al,(%ecx,%ebx,1)
   0x01cc511b: jmp    0x01cc51ea
 
+  // itos
   0x01cc5120: cmp    $0x3,%eax
   0x01cc5123: jne    0x01cc5132
 
-  // itos
   0x01cc5129: pop    %eax
   0x01cc512a: mov    %eax,(%ecx,%ebx,1)
   0x01cc512d: jmp    0x01cc51ea
 
+  // atos
   0x01cc5132: cmp    $0x7,%eax
   0x01cc5135: jne    0x01cc514f
-
-  // atos
   0x01cc513b: pop    %eax
   //do_oop_store
   0x01cc513c: mov    %eax,(%ecx,%ebx,1)

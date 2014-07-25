@@ -1,7 +1,7 @@
 //ConstMethod的内存布局
 /*
 	偏移(10) 偏移(16)  字段                   类型
-	----     ------    --------        --------------------
+	----     ------    --------               --------------------
 	0	     0         _fingerprint           volatile unsigned __int64，占了８个字节
     8        8         _constants             ConstantPool *
 	12	     C         _stackmap_data         Array<unsigned char> *

@@ -36,9 +36,9 @@ StubRoutines::call_stub [0x01dc03b4, 0x01dc0485[ (209 bytes)
   0x01dc03ba: shl    $0x2,%ecx
   //$0x10是16，因为要保存rdi、rsi、rbx、mxcsr这4个寄存器的值，每个占4个字节，所以再加16
   0x01dc03bd: add    $0x10,%ecx
-  //把%esp移动最后一个parameter位置
+  //把%esp移到最后一个parameter位置
   0x01dc03c0: sub    %ecx,%esp
-  //堆栈按16位对齐，这里去掉后4位，相当于减16，如果前面两条指令得到的字节数不够16的整数倍，这里就会减小%esp的值
+  //堆栈按16位对齐，这里去掉后4位，相当于减去后4位的值，如果前面两条指令得到的字节数不够16的整数倍，这里就会减小%esp的值
   0x01dc03c2: and    $0xfffffff0,%esp
 
   //按惯例，被调用者(被call指令调用)要保存rdi、rsi、rbx这3个寄存器的值
@@ -46,7 +46,7 @@ StubRoutines::call_stub [0x01dc03b4, 0x01dc0485[ (209 bytes)
   0x01dc03c8: mov    %esi,-0x8(%ebp)
   0x01dc03cb: mov    %ebx,-0xc(%ebp)
 
-  //保存mxcsr寄存器的值
+  //保存mxcsr寄存器的值, 属于SSE，在VS中的寄存器窗口右击，然后选择SSE就可以看到了
   0x01dc03ce: stmxcsr -0x10(%ebp)
 
   0x01dc03d2: mov    -0x10(%ebp),%eax
@@ -55,7 +55,7 @@ StubRoutines::call_stub [0x01dc03b4, 0x01dc0485[ (209 bytes)
   0x01dc03e1: je     0x01dc03ee
   0x01dc03e7: ldmxcsr 0x56005778 //如果0x56005778(在数据段)中的值与%eax中的值不同，则把0x56005778中的值保存到mxcsr寄存器
 
-  //对应CTRL寄存器
+  //对应CTRL寄存器，在VS中的寄存器窗口右击，然后选择Floating Point就可以看到了
   0x01dc03ee: fldcw  0x56005768 //Loads the 16-bit source operand into the FPU control word.
 
   // make sure we have no pending exceptions

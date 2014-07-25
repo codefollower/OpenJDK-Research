@@ -1,11 +1,11 @@
 //ConstantPoolCache的内存布局
 /*
     偏移(10) 偏移(16)  字段                   类型
-    ----     ------    --------        --------------------
+    ----     ------    --------               --------------------
     0        0         _length                int
     4        4         _constant_pool         ConstantPool *
     
-    ConstantPoolCacheEntry 0
+    ConstantPoolCacheEntry (0)
     --------------------------
     8        8         _indices               intx //占4个字节
     12       C         _f1                    Metadata*
@@ -13,7 +13,7 @@
     20       14        _flags                 intx
     --------------------------
 
-    ConstantPoolCacheEntry 1
+    ConstantPoolCacheEntry (1)
     --------------------------
     24       18        _indices               intx //占4个字节
     28       1C        _f1                    Metadata*
@@ -23,7 +23,7 @@
 
     ......
 
-    ConstantPoolCacheEntry n
+    ConstantPoolCacheEntry (n)
     --------------------------
     ......
     --------------------------

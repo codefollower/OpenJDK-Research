@@ -81,18 +81,18 @@ putfield  181 putfield  [0x01cc5400, 0x01cc5620]  544 bytes
 
   0x01cc54fc: mov    %eax,%edx
   0x01cc54fe: shr    $0x15,%edx
-  0x01cc5501: and    $0x1,%edx
+  0x01cc5501: and    $0x1,%edx //field is volatile
 
-  0x01cc5504: shr    $0x1c,%eax
+  0x01cc5504: shr    $0x1c,%eax //tos
   0x01cc5507: and    $0xf,%eax
   0x01cc550a: jne    0x01cc551c
 
   // btos
-  0x01cc5510: pop    %eax
+  0x01cc5510: pop    %eax //操作数
   
   //pop_and_check_object
   0x01cc5511: pop    %ecx
-  0x01cc5512: cmp    (%ecx),%eax
+  0x01cc5512: cmp    (%ecx),%eax //null_check，%ecx为0时，就会出错
 
   0x01cc5514: mov    %al,(%ecx,%ebx,1)
   0x01cc5517: jmp    0x01cc55fe

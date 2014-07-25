@@ -131,7 +131,7 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
   // get return address
   0x01cbbaf3: pop    %eax
   // compute beginning of parameters (rdi)
-  0x01cbbaf4: lea    -0x4(%esp,%ecx,4),%edi //让edi指向第一个参数的位置
+  0x01cbbaf4: lea    -0x4(%esp,%ecx,4),%edi //让edi指向第一个参数在堆栈中的位置
   // rdx - # of additional locals
   // allocate space for locals
   // explicitly initialize locals
@@ -275,7 +275,7 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 			  0x01cbbb8a: call   0x01cbbb94
 			  0x01cbbb8f: jmp    0x01cbbc28
 
-			  //为调用调用InterpreterRuntime::build_method_counters(JavaThread* thread, Method* m)
+			  //为调用InterpreterRuntime::build_method_counters(JavaThread* thread, Method* m)
 			  //先把method指针压入堆栈
 			  //pass_arg1(this, arg_1);
 			  0x01cbbb94: push   %ebx，
@@ -351,8 +351,8 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 		  0x01cbbc2d: je     0x01cbbc50
 	  //---end   get_method_counters(rbx, rax, done);
 
-		//MethodCounters的内存布局
-		/*
+	  //MethodCounters的内存布局
+	  /*
 			偏移  字段                           类型
 			----  ---------------                --------------------
 			0	  _interpreter_invocation_count  int
@@ -360,7 +360,7 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 			6	  _number_of_breakpoints         unsigned short
 			8	  _invocation_counter._counter   unsigned int
 			12	  _backedge_counter._counter     unsigned int
-		*/
+      */
 	  // Update standard invocation counters
 	  0x01cbbc33: mov    0x8(%eax),%ecx //_invocation_counter._counter
 	  0x01cbbc36: add    $0x8,%ecx
@@ -379,7 +379,7 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
 	  //注意这里只是更新ecx，并不会写回_invocation_counter
 	  0x01cbbc42: add    %eax,%ecx
 
-　　　//是否超过InvocationCounter::InterpreterInvocationLimit，超过的话就当overflow处理
+      //是否超过InvocationCounter::InterpreterInvocationLimit，超过的话就当overflow处理
 	  0x01cbbc44: cmp    0x55627784,%ecx
 	  0x01cbbc4a: jae    0x01cbbd29
   //---end   generate_counter_incr
@@ -401,16 +401,17 @@ method entry point (kind = zerolocals)  [0x01cbba60, 0x01cbbde0]  896 bytes
   //__ movbool(do_not_unlock_if_synchronized, false);
   0x01cbbc9a: movb   $0x0,0x1a1(%eax)
 
-  // no synchronization necessary
-  0x01cbbca1: mov    0x14(%ebx),%eax
-  0x01cbbca4: test   $0x20,%eax
-  0x01cbbca9: je     0x01cbbcc0
-  //__ stop("method needs synchronization");
-  0x01cbbcaf: push   $0x55318bf4
-  0x01cbbcb4: call   0x01cbbcb9
-  0x01cbbcb9: pusha  
-  0x01cbbcba: call   0x54dedbf0
-  0x01cbbcbf: hlt    
+  //对应zerolocals_synchronized中的lock_method
+	  // no synchronization necessary
+	  0x01cbbca1: mov    0x14(%ebx),%eax
+	  0x01cbbca4: test   $0x20,%eax
+	  0x01cbbca9: je     0x01cbbcc0
+	  //__ stop("method needs synchronization");
+	  0x01cbbcaf: push   $0x55318bf4
+	  0x01cbbcb4: call   0x01cbbcb9
+	  0x01cbbcb9: pusha  
+	  0x01cbbcba: call   0x54dedbf0
+	  0x01cbbcbf: hlt    
 
   // start execution *****************非常重要*****************
   0x01cbbcc0: mov    -0x20(%ebp),%eax //看看[ (%esp)               ]堆栈项中的值与esp是否一样
