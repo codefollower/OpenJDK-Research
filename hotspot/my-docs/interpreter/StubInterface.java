@@ -1,3 +1,7 @@
+//DEF_STUB_INTERFACE宏在src\share\vm\code\stubs.hpp
+
+//InterpreterCodeletInterface在src\share\vm\interpreter\interpreter.hpp
+//DEF_STUB_INTERFACE(InterpreterCodelet);
 class InterpreterCodeletInterface: public StubInterface {            
    private:                                                
     static InterpreterCodelet*    cast(Stub* self)         { return (InterpreterCodelet*)self; }                 
@@ -21,6 +25,8 @@ class InterpreterCodeletInterface: public StubInterface {
     virtual void    print(Stub* self)                      { cast(self)->print(); }                
   };
 
+//ICStubInterface在src\share\vm\code\icBuffer.cpp
+//DEF_STUB_INTERFACE(ICStub);
 class ICStubInterface: public StubInterface {            
    private:                                                
     static ICStub*    cast(Stub* self)                     { return (ICStub*)self; }                 
