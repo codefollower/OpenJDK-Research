@@ -7,9 +7,11 @@ monitorexit  195 monitorexit  [0x01cc67c0, 0x01cc6970]  432 bytes
   0x01cc67c3: mov    -0x20(%ebp),%edx
   0x01cc67c6: lea    -0x20(%ebp),%ebx
   0x01cc67c9: jmp    0x01cc67d7
+
   0x01cc67cb: cmp    0x4(%edx),%eax
   0x01cc67ce: je     0x01cc6889
   0x01cc67d4: add    $0x8,%edx
+
   0x01cc67d7: cmp    %ebx,%edx
   0x01cc67d9: jne    0x01cc67cb
 
@@ -62,11 +64,12 @@ monitorexit  195 monitorexit  [0x01cc67c0, 0x01cc6970]  432 bytes
 
   0x01cc6889: push   %eax // make sure object is on stack (contract with oopMaps)
 
+  //如果是同步方法, 对应的return字节码中的汇编也包含unlock_object
   //---begin InterpreterMacroAssembler::unlock_object
 	  0x01cc688a: mov    %esi,-0x1c(%ebp) //save_bcp
 	  // Convert from BasicObjectLock structure to object and BasicLock structure
 	  // Store the BasicLock address into %rax,
-	  0x01cc688d: lea    (%edx),%eax
+	  0x01cc688d: lea    (%edx),%eax //直接把%edx中的值放到%eax
 
 	  0x01cc688f: mov    0x4(%edx),%ecx // Load oop into obj_reg(%rcx)
 	  0x01cc6892: movl   $0x0,0x4(%edx) // Free entry

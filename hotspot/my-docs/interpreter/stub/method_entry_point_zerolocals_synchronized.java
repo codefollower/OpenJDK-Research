@@ -194,51 +194,70 @@ method entry point (kind = zerolocals_synchronized)  [0x01cbbdf0, 0x01cbc2f0]  1
 
 		  //---begin MacroAssembler::biased_locking_enter
 			  0x01cbc07b: mov    (%ecx),%eax //此时eax用来存放mark word
-			  0x01cbc07d: push   %edx
+			  0x01cbc07d: push   %edx //为了使用edx，临时把原有值放入堆栈
 			  0x01cbc07e: mov    %eax,%edx
 			  0x01cbc080: and    $0x7,%edx
 			  0x01cbc083: cmp    $0x5,%edx
 			  0x01cbc086: pop    %edx
-			  0x01cbc087: jne    0x01cbc11b //mark word的后三位不是101时说明未使用biased_locking，直接结束biased_locking_enter
+			  //mark word的后三位不是101(0x5)时说明未使用biased_locking，直接结束biased_locking_enter
+			  //相当于%edx - 0x5时不为0就跳转
+			  0x01cbc087: jne    0x01cbc11b
 			  0x01cbc08d: mov    %eax,(%edx)
-			  0x01cbc08f: push   %edx
+			  0x01cbc08f: push   %edx //接下来要用临时用edx，所以先push到堆栈中
 			  //get_thread(tmp_reg)
 			  0x01cbc090: mov    %fs:0x0(,%eiz,1),%edx
 			  0x01cbc098: mov    -0xc(%edx),%edx
 
-			  0x01cbc09b: xor    %edx,%eax
-			  0x01cbc09d: mov    0x4(%ecx),%edx
+			  0x01cbc09b: xor    %edx,%eax //例如edx=00225000, eax=00000005时，进行xor后eax=00225005
+			  0x01cbc09d: mov    0x4(%ecx),%edx //_metadata._klass
+			  //Klass::prototype_header，也是一个markOop，如果也是00000005，进行xor后eax=00225000
 			  0x01cbc0a0: xor    0x68(%edx),%eax
-			  0x01cbc0a3: and    $0xffffff87,%eax
+			  0x01cbc0a3: and    $0xffffff87,%eax //屏蔽掉markOop中的age字段，eax还是00225000
 			  0x01cbc0a6: pop    %edx
 			  0x01cbc0a7: je     0x01cbc1dc
+
 			  0x01cbc0ad: test   $0x7,%eax
-			  0x01cbc0b2: jne    0x01cbc10d
-			  0x01cbc0b8: test   $0x180,%eax
+			  0x01cbc0b2: jne    0x01cbc10d //后3位不为0则跳转
+
+			  0x01cbc0b8: test   $0x180,%eax //第7、8位只要有一位不为0则跳转，正好对应epoch
 			  0x01cbc0bd: jne    0x01cbc0e9
+
 			  0x01cbc0c3: mov    (%edx),%eax
 			  0x01cbc0c5: and    $0x1ff,%eax
 			  0x01cbc0cb: push   %edx
+
+			  //get_thread(tmp_reg);
 			  0x01cbc0cc: mov    %fs:0x0(,%eiz,1),%edx
 			  0x01cbc0d4: mov    -0xc(%edx),%edx
+
 			  0x01cbc0d7: or     %eax,%edx
+			  //EAX = 00000005 ECX = 0F2CE620 EDX = 00225005 (%ecx) = 00000005
+			  //如果(%ecx)=EAX 那么(%ecx)=EDX=00225005，否则EAX=EDX=00225005
 			  0x01cbc0d9: lock cmpxchg %edx,(%ecx)
 			  0x01cbc0dd: pop    %edx
+
 			  0x01cbc0de: jne    0x01cbc13e
 			  0x01cbc0e4: jmp    0x01cbc1dc
+
 			  0x01cbc0e9: push   %edx
+			  //get_thread(tmp_reg);
 			  0x01cbc0ea: mov    %fs:0x0(,%eiz,1),%edx
-			  0x01cbc0f2: mov    -0xc(%edx),%edx
-			  0x01cbc0f5: mov    0x4(%ecx),%eax
+			  0x01cbc0f2: mov    -0xc(%edx),%edx //EDX = 00225000
+
+			  0x01cbc0f5: mov    0x4(%ecx),%eax //_metadata._klass
+			  //Klass::prototype_header，也是一个markOop，如果也是00000005，进行or后edx=00225000
 			  0x01cbc0f8: or     0x68(%eax),%edx
 			  0x01cbc0fb: mov    (%edx),%eax
 			  0x01cbc0fd: lock cmpxchg %edx,(%ecx)
 			  0x01cbc101: pop    %edx
+
 			  0x01cbc102: jne    0x01cbc13e
 			  0x01cbc108: jmp    0x01cbc1dc
+
 			  0x01cbc10d: mov    (%edx),%eax
 			  0x01cbc10f: push   %edx
-			  0x01cbc110: mov    0x4(%ecx),%edx
+			  0x01cbc110: mov    0x4(%ecx),%edx //_metadata._klass
+			  //Klass::prototype_header，也是一个markOop，如果也是00000005，则edx=00000005
 			  0x01cbc113: mov    0x68(%edx),%edx
 			  0x01cbc116: lock cmpxchg %edx,(%ecx)
 			  0x01cbc11a: pop    %edx
@@ -249,9 +268,10 @@ method entry point (kind = zerolocals_synchronized)  [0x01cbbdf0, 0x01cbc2f0]  1
 		  // Load (object->mark() | 1) into swap_reg %rax,
 		  0x01cbc120: or     (%ecx),%eax
 		  // Save (object->mark() | 1) into BasicLock's displaced header
-		  0x01cbc122: mov    %eax,(%edx)
+		  0x01cbc122: mov    %eax,(%edx) //(object->mark() | 1)存入栈顶
+		  //如果%eax的值和(%ecx)相等，那么把%edx的值(是一个地址)存到(%ecx)，否则把(%ecx)放到%eax
 		  0x01cbc124: lock cmpxchg %edx,(%ecx)
-		  0x01cbc128: je     0x01cbc1dc
+		  0x01cbc128: je     0x01cbc1dc //如果%eax和(%ecx)相等则跳转
 		  0x01cbc12e: sub    %esp,%eax
 		  0x01cbc130: and    $0xfffff003,%eax
 		  // Save the test result, for recursive case, the result is zero

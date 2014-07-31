@@ -104,6 +104,7 @@ return  177 return  [0x01cc4af0, 0x01cc4e10]  800 bytes
 	  0x01cc4c03: call   0x54dedbf0
 	  0x01cc4c08: hlt    
 
+      //monitorexit的汇编中也用到了
 	  //---begin InterpreterMacroAssembler::unlock_object
 	      //save_bcp();
 		  0x01cc4c09: mov    %esi,-0x1c(%ebp) // Save in case of exception
@@ -259,7 +260,7 @@ return  177 return  [0x01cc4af0, 0x01cc4e10]  800 bytes
 		  0x01cc4de7: hlt    
 		  0x01cc4de8: call   0x55215710
 		  0x01cc4ded: add    $0x8,%esp
-      //---end  InterpreterMacroAssembler::notify_method_exit
+      //---end   InterpreterMacroAssembler::notify_method_exit
 	  
 	  
 	  0x01cc4df0: mov    -0x4(%ebp),%ebx // remove activation

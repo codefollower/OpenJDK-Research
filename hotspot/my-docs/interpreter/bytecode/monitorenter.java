@@ -1,21 +1,87 @@
 monitorenter  194 monitorenter  [0x01cc65d0, 0x01cc67b0]  480 bytes
 
-  0x01cc65d0: pop    %eax
+  0x01cc65d0: pop    %eax //monitor对象地址
   0x01cc65d1: cmp    (%eax),%eax //null_check
   0x01cc65d3: xor    %edx,%edx // points to free slot or NULL
+
+  //此时的堆栈
+  	  //－－－－－－－－－－－－－－－－－－－－－－
+	  // -8  -0x20  [ (%esp)               ] //reserve word for pointer to expression stack bottom
+	  // -7  -0x1C  [ 第一个字节码内存地址 ]
+	  // -6  -0x18  [ argument word 1 所在堆栈位置 ] <--- rdi
+	  // -5  -0x14  [ ConstantPoolCache    ]
+	  // -4  -0x10  [ 0                    ]
+	  // -3  -0xC   [ method               ]
+	  // -2  -0x8   [ 0                    ]
+	  // -1  -0x4   [ argument word n 所在堆栈位置 ]
+	  //      0     [ saved rbp,           ] <--- rbp,
+	  //－－－－－－－－－－－－－－－－－－－－－－
   0x01cc65d5: mov    -0x20(%ebp),%ecx // points to current entry, starting with top-most entry
   0x01cc65d8: lea    -0x20(%ebp),%ebx // points to word before bottom of monitor block
   0x01cc65db: jmp    0x01cc65ef
-  0x01cc65dd: cmpl   $0x0,0x4(%ecx)
-  0x01cc65e4: cmove  %ecx,%edx
+
+  0x01cc65dd: cmpl   $0x0,0x4(%ecx) //在monitorexit后会把monitor对象在堆栈那个位置设为0
+  0x01cc65e4: cmove  %ecx,%edx //ZF=1时移动
   0x01cc65e7: cmp    0x4(%ecx),%eax
   0x01cc65ea: je     0x01cc65f3
-  0x01cc65ec: add    $0x8,%ecx
+  0x01cc65ec: add    $0x8,%ecx //已经到了下一个不同的monitor对象
+
   0x01cc65ef: cmp    %ebx,%ecx
   0x01cc65f1: jne    0x01cc65dd
 
   0x01cc65f3: test   %edx,%edx
   0x01cc65f5: jne    0x01cc6616
+
+  //第一次
+      // -10 -0x28  [                      ] 
+      // -9  -0x24  [                      ] 
+  	  //－－－－－－－－－－－－－－－－－－－－－－
+	  // -8  -0x20  [ -0x28的位置          ] //reserve word for pointer to expression stack bottom
+	  // -7  -0x1C  [ 第一个字节码内存地址 ]
+	  // -6  -0x18  [ argument word 1 所在堆栈位置 ] <--- rdi
+	  // -5  -0x14  [ ConstantPoolCache    ]
+	  // -4  -0x10  [ 0                    ]
+	  // -3  -0xC   [ method               ]
+	  // -2  -0x8   [ 0                    ]
+	  // -1  -0x4   [ argument word n 所在堆栈位置 ]
+	  //      0     [ saved rbp,           ] <--- rbp,
+	  //－－－－－－－－－－－－－－－－－－－－－－
+
+  //第二次
+      // -12 -0x30  [                      ] 
+      // -11 -0x2C  [                      ] 
+      // -10 -0x28  [                      ] 
+      // -9  -0x24  [                      ] 
+  	  //－－－－－－－－－－－－－－－－－－－－－－
+	  // -8  -0x20  [ -0x30的位置          ] //reserve word for pointer to expression stack bottom
+	  // -7  -0x1C  [ 第一个字节码内存地址 ]
+	  // -6  -0x18  [ argument word 1 所在堆栈位置 ] <--- rdi
+	  // -5  -0x14  [ ConstantPoolCache    ]
+	  // -4  -0x10  [ 0                    ]
+	  // -3  -0xC   [ method               ]
+	  // -2  -0x8   [ 0                    ]
+	  // -1  -0x4   [ argument word n 所在堆栈位置 ]
+	  //      0     [ saved rbp,           ] <--- rbp,
+	  //－－－－－－－－－－－－－－－－－－－－－－
+
+  //第三次
+      // -14 -0x38  [                      ] 
+      // -13 -0x34  [                      ] 
+      // -12 -0x30  [                      ] 
+      // -11 -0x2C  [                      ] 
+      // -10 -0x28  [                      ] 
+      // -9  -0x24  [                      ] 
+  	  //－－－－－－－－－－－－－－－－－－－－－－
+	  // -8  -0x20  [ -0x38的位置          ] //reserve word for pointer to expression stack bottom
+	  // -7  -0x1C  [ 第一个字节码内存地址 ]
+	  // -6  -0x18  [ argument word 1 所在堆栈位置 ] <--- rdi
+	  // -5  -0x14  [ ConstantPoolCache    ]
+	  // -4  -0x10  [ 0                    ]
+	  // -3  -0xC   [ method               ]
+	  // -2  -0x8   [ 0                    ]
+	  // -1  -0x4   [ argument word n 所在堆栈位置 ]
+	  //      0     [ saved rbp,           ] <--- rbp,
+	  //－－－－－－－－－－－－－－－－－－－－－－
 
   // 1. compute new pointers  
   0x01cc65f7: mov    -0x20(%ebp),%edx
@@ -36,6 +102,20 @@ monitorenter  194 monitorenter  [0x01cc65d0, 0x01cc67b0]  480 bytes
   // The object has already been poped from the stack, so the expression stack looks correct.
   0x01cc6616: inc    %esi
   0x01cc6617: mov    %eax,0x4(%edx) // store object
+
+  //  // -10 -0x28  [                      ] 
+      // -9  -0x24  [ monitor对象地址      ] 
+  	  //－－－－－－－－－－－－－－－－－－－－－－
+	  // -8  -0x20  [ -0x28的位置          ] //reserve word for pointer to expression stack bottom
+	  // -7  -0x1C  [ 第一个字节码内存地址 ]
+	  // -6  -0x18  [ argument word 1 所在堆栈位置 ] <--- rdi
+	  // -5  -0x14  [ ConstantPoolCache    ]
+	  // -4  -0x10  [ 0                    ]
+	  // -3  -0xC   [ method               ]
+	  // -2  -0x8   [ 0                    ]
+	  // -1  -0x4   [ argument word n 所在堆栈位置 ]
+	  //      0     [ saved rbp,           ] <--- rbp,
+	  //－－－－－－－－－－－－－－－－－－－－－－
 
   //在method entry point (kind = zerolocals_synchronized)中也同样用到lock_object
   //---begin lock_object

@@ -1,17 +1,17 @@
-invokestatic  184 invokestatic  [0x01cc58f0, 0x01cc5a20]  304 bytes
+invokestatic  184 invokestatic  [0x07f158f0, 0x07f15a20]  304 bytes
 
-  0x01cc58f0: sub    $0x4,%esp
-  0x01cc58f3: fstps  (%esp)
-  0x01cc58f6: jmp    0x01cc5914
-  0x01cc58fb: sub    $0x8,%esp
-  0x01cc58fe: fstpl  (%esp)
-  0x01cc5901: jmp    0x01cc5914
-  0x01cc5906: push   %edx
-  0x01cc5907: push   %eax
-  0x01cc5908: jmp    0x01cc5914
-  0x01cc590d: push   %eax
-  0x01cc590e: jmp    0x01cc5914
-  0x01cc5913: push   %eax
+  0x07f158f0: sub    $0x4,%esp
+  0x07f158f3: fstps  (%esp)
+  0x07f158f6: jmp    0x07f15914
+  0x07f158fb: sub    $0x8,%esp
+  0x07f158fe: fstpl  (%esp)
+  0x07f15901: jmp    0x07f15914
+  0x07f15906: push   %edx
+  0x07f15907: push   %eax
+  0x07f15908: jmp    0x07f15914
+  0x07f1590d: push   %eax
+  0x07f1590e: jmp    0x07f15914
+  0x07f15913: push   %eax
 
   //------------------------------------------------------------------------------------------------------------------------
 	  //  8 [ (%esp)               ] <--- rsp  //reserve word for pointer to expression stack bottom
@@ -51,72 +51,72 @@ invokestatic  184 invokestatic  [0x01cc58f0, 0x01cc5a20]  304 bytes
 	  //  9 [ thread               ]
 
   //直接跳到这里
-  0x01cc5914: mov    %esi,-0x1c(%ebp) //%esi的值是invokestatic字节码在内存中的地址
-  0x01cc5917: movzwl 0x1(%esi),%edx //跟在invokestatic后的两个字节是indexbyte1、indexbyte2
-  0x01cc591b: mov    -0x14(%ebp),%ecx //ConstantPoolCache
-  0x01cc591e: shl    $0x2,%edx //看后面的长篇注释
-  0x01cc5921: mov    0x8(%ecx,%edx,4),%ebx //计算ConstantPoolCacheEntry._indices字段的值
-  0x01cc5925: shr    $0x10,%ebx
-  0x01cc5928: and    $0xff,%ebx
+  0x07f15914: mov    %esi,-0x1c(%ebp) //%esi的值是invokestatic字节码在内存中的地址
+  0x07f15917: movzwl 0x1(%esi),%edx //跟在invokestatic后的两个字节是indexbyte1、indexbyte2
+  0x07f1591b: mov    -0x14(%ebp),%ecx //ConstantPoolCache
+  0x07f1591e: shl    $0x2,%edx //看后面的长篇注释
+  0x07f15921: mov    0x8(%ecx,%edx,4),%ebx //计算ConstantPoolCacheEntry._indices字段的值
+  0x07f15925: shr    $0x10,%ebx
+  0x07f15928: and    $0xff,%ebx
 
-  0x01cc592e: cmp    $0xb8,%ebx //$0xb8是invokestatic的bytecode值, 如果%ebx的值也是$0xb8, 说明解析过了，跳过resolve_invoke
-  0x01cc5934: je     0x01cc59e7
+  0x07f1592e: cmp    $0xb8,%ebx //$0xb8是invokestatic的bytecode值, 如果%ebx的值也是$0xb8, 说明解析过了，跳过resolve_invoke
+  0x07f15934: je     0x07f159e7
 
 
-  0x01cc593a: mov    $0xb8,%ebx //invokestatic的bytecode值先放到ebx，然后在下面的push   %ebx中先压入堆栈
+  0x07f1593a: mov    $0xb8,%ebx //invokestatic的bytecode值先放到ebx，然后在下面的push   %ebx中先压入堆栈
   //因为InterpreterRuntime::resolve_invoke的参数是(JavaThread* thread, Bytecodes::Code bytecode)
   //所以在下面还有个push   %edi就是往堆栈中压入thread
   //---begin call_VM
-	  0x01cc593f: call   0x01cc5949
-	  0x01cc5944: jmp    0x01cc59dd
-	  0x01cc5949: push   %ebx
-	  0x01cc594a: lea    0x8(%esp),%eax
-	  0x01cc594e: cmpl   $0x0,-0x8(%ebp)
-	  0x01cc5955: je     0x01cc596c
-	  0x01cc595b: push   $0x55310188
-	  0x01cc5960: call   0x01cc5965
-	  0x01cc5965: pusha  
-	  0x01cc5966: call   0x54dedbf0
-	  0x01cc596b: hlt    
-	  0x01cc596c: mov    %esi,-0x1c(%ebp)
-	  0x01cc596f: mov    %fs:0x0(,%eiz,1),%edi
-	  0x01cc5977: mov    -0xc(%edi),%edi
-	  0x01cc597a: push   %edi
-	  0x01cc597b: mov    %ebp,0x144(%edi)
-	  0x01cc5981: mov    %eax,0x13c(%edi)
-	  0x01cc5987: call   0x5505b0b0
-	  0x01cc598c: add    $0x8,%esp
-	  0x01cc598f: push   %eax
-	  0x01cc5990: mov    %fs:0x0(,%eiz,1),%eax
-	  0x01cc5998: mov    -0xc(%eax),%eax
-	  0x01cc599b: cmp    %eax,%edi
-	  0x01cc599d: je     0x01cc59b4
+	  0x07f1593f: call   0x07f15949
+	  0x07f15944: jmp    0x07f159dd
+	  0x07f15949: push   %ebx
+	  0x07f1594a: lea    0x8(%esp),%eax
+	  0x07f1594e: cmpl   $0x0,-0x8(%ebp)
+	  0x07f15955: je     0x07f1596c
+	  0x07f1595b: push   $0x55310188
+	  0x07f15960: call   0x07f15965
+	  0x07f15965: pusha  
+	  0x07f15966: call   0x54dedbf0
+	  0x07f1596b: hlt    
+	  0x07f1596c: mov    %esi,-0x1c(%ebp)
+	  0x07f1596f: mov    %fs:0x0(,%eiz,1),%edi
+	  0x07f15977: mov    -0xc(%edi),%edi
+	  0x07f1597a: push   %edi
+	  0x07f1597b: mov    %ebp,0x144(%edi)
+	  0x07f15981: mov    %eax,0x13c(%edi)
+	  0x07f15987: call   0x5505b0b0
+	  0x07f1598c: add    $0x8,%esp
+	  0x07f1598f: push   %eax
+	  0x07f15990: mov    %fs:0x0(,%eiz,1),%eax
+	  0x07f15998: mov    -0xc(%eax),%eax
+	  0x07f1599b: cmp    %eax,%edi
+	  0x07f1599d: je     0x07f159b4
 	  ;; MacroAssembler::call_VM_base: rdi not callee saved?
-	  0x01cc59a3: push   $0x55312af0
-	  0x01cc59a8: call   0x01cc59ad
-	  0x01cc59ad: pusha  
-	  0x01cc59ae: call   0x54dedbf0
-	  0x01cc59b3: hlt    
-	  0x01cc59b4: pop    %eax
-	  0x01cc59b5: movl   $0x0,0x13c(%edi)
-	  0x01cc59bf: movl   $0x0,0x144(%edi)
-	  0x01cc59c9: cmpl   $0x0,0x4(%edi)
-	  0x01cc59d0: jne    0x01cb0340
-	  0x01cc59d6: mov    -0x1c(%ebp),%esi
-	  0x01cc59d9: mov    -0x18(%ebp),%edi
-	  0x01cc59dc: ret    
+	  0x07f159a3: push   $0x55312af0
+	  0x07f159a8: call   0x07f159ad
+	  0x07f159ad: pusha  
+	  0x07f159ae: call   0x54dedbf0
+	  0x07f159b3: hlt    
+	  0x07f159b4: pop    %eax
+	  0x07f159b5: movl   $0x0,0x13c(%edi)
+	  0x07f159bf: movl   $0x0,0x144(%edi)
+	  0x07f159c9: cmpl   $0x0,0x4(%edi)
+	  0x07f159d0: jne    0x01cb0340
+	  0x07f159d6: mov    -0x1c(%ebp),%esi
+	  0x07f159d9: mov    -0x18(%ebp),%edi
+	  0x07f159dc: ret    
   //---end   call_VM
 
   //跟上面相同
-  0x01cc59dd: movzwl 0x1(%esi),%edx //get_cache_index_at_bcp
-  0x01cc59e1: mov    -0x14(%ebp),%ecx
-  0x01cc59e4: shl    $0x2,%edx
+  0x07f159dd: movzwl 0x1(%esi),%edx //get_cache_index_at_bcp
+  0x07f159e1: mov    -0x14(%ebp),%ecx
+  0x07f159e4: shl    $0x2,%edx
 
-  0x01cc59e7: mov    0xc(%ecx,%edx,4),%ebx  //method_offset
-  0x01cc59eb: mov    0x14(%ecx,%edx,4),%edx //flags_offset
-  0x01cc59ef: shr    $0x1c,%edx // compute return type
-  0x01cc59f2: mov    0x556277cc(,%edx,4),%edx // load return address
-  0x01cc59f9: push   %edx // push return address
+  0x07f159e7: mov    0xc(%ecx,%edx,4),%ebx  //method_offset
+  0x07f159eb: mov    0x14(%ecx,%edx,4),%edx //flags_offset
+  0x07f159ef: shr    $0x1c,%edx // compute return type 最前面4位
+  0x07f159f2: mov    0x556277cc(,%edx,4),%edx // load return address
+  0x07f159f9: push   %edx // push return address(对应invoke return entry points)
 
 	  //    [ (%esp)               ] <--- rsp  //reserve word for pointer to expression stack bottom
 	  //    [ 第一个字节码内存地址 ]
@@ -128,28 +128,28 @@ invokestatic  184 invokestatic  [0x01cc58f0, 0x01cc5a20]  304 bytes
 	  //    [ argument word n 所在堆栈位置 ]
 	  //    [ saved rbp,           ] <--- rbp,
   //jump_from_interpreted
-  0x01cc59fa: lea    0x4(%esp),%esi
-  0x01cc59fe: mov    %esi,-0x8(%ebp)
-  0x01cc5a01: jmp    *0x34(%ebx) //Method._from_interpreted_entry 重新转到method entry point (kind = zerolocals)
+  0x07f159fa: lea    0x4(%esp),%esi // set sender sp
+  0x07f159fe: mov    %esi,-0x8(%ebp) // record last_sp
+  0x07f15a01: jmp    *0x34(%ebx) //Method._from_interpreted_entry 重新转到method entry point (kind = zerolocals)
 
   //下面的对应TemplateInterpreterGenerator::generate_and_dispatch的should_not_reach_here();
-  0x01cc5a04: push   $0x552fd97c
-  0x01cc5a09: call   0x01cc5a0e
-  0x01cc5a0e: pusha  
-  0x01cc5a0f: call   0x54dedbf0
-  0x01cc5a14: hlt    
+  0x07f15a04: push   $0x552fd97c
+  0x07f15a09: call   0x07f15a0e
+  0x07f15a0e: pusha  
+  0x07f15a0f: call   0x54dedbf0
+  0x07f15a14: hlt    
 
-  0x01cc5a15: nop    
-  0x01cc5a16: nop    
-  0x01cc5a17: nop    
-  0x01cc5a18: int3   
-  0x01cc5a19: int3   
-  0x01cc5a1a: int3   
-  0x01cc5a1b: int3   
-  0x01cc5a1c: int3   
-  0x01cc5a1d: int3   
-  0x01cc5a1e: int3   
-  0x01cc5a1f: int3   
+  0x07f15a15: nop    
+  0x07f15a16: nop    
+  0x07f15a17: nop    
+  0x07f15a18: int3   
+  0x07f15a19: int3   
+  0x07f15a1a: int3   
+  0x07f15a1b: int3   
+  0x07f15a1c: int3   
+  0x07f15a1d: int3   
+  0x07f15a1e: int3   
+  0x07f15a1f: int3   
 
 对应VS中的Intel汇编格式
 	01F75914  mov         dword ptr [ebp-1Ch],esi  
@@ -253,7 +253,7 @@ shr    $0x10,%ebx
 and    $0xff,%ebx  
   
 cmp    $0xb7,%ebx  
-je     0x01cc5897  
+je     0x07f15897  
 
 
 乘以4,是因为每个ConstantPoolCacheEntry刚好有4个字段，每个字段占用的字节数刚好又一样，都是4，

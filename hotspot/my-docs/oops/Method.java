@@ -11,17 +11,23 @@
 	24	     18        _vtable_index                int
 	28	     1C        _method_size                 unsigned short //占两字节
 	30	     1E        _intrinsic_id                unsigned char  //占1字节
-	31	     1F        _jfr_towrite                 unsigned char
-	32	     20        _caller_sensitive            unsigned char
-	33	     21        _force_inline                unsigned char
-	34	     22        _hidden                      unsigned char
-	35	     23        _dont_inline                 unsigned char
-	36	     24        _compiled_invocation_count   int
-	40	     28        _i2i_entry                   unsigned char *
-	44	     2C        _adapter                     AdapterHandlerEntry *
-	48	     30        _from_compiled_entry         unsigned char * volatile
-	52	     34        _code                        nmethod * volatile
-	56	     38        _from_interpreted_entry      unsigned char * volatile
+
+	                   下面5个位字段占一字节
+                       ---------------
+	31	     1F        _jfr_towrite                 : 1,
+	  	               _caller_sensitive            : 1,
+	  	               _force_inline                : 1,
+	  	               _hidden                      : 1,
+	  	               _dont_inline                 : 1,
+					                                : 3, //空的
+	                   ---------------
+
+	32	     20        _compiled_invocation_count   int
+	36	     24        _i2i_entry                   unsigned char *
+	40	     28        _adapter                     AdapterHandlerEntry *
+	44	     2C        _from_compiled_entry         unsigned char * volatile
+	48	     30        _code                        nmethod * volatile
+	52	     34        _from_interpreted_entry      unsigned char * volatile
 */
 
 Method的内存布局:
