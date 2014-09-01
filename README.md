@@ -11,9 +11,7 @@ OpenJDK(JVM、Javac)源代码学习研究(包括代码注释、文档、用于�
 
 ## HotSpot构建与调试
 
-[构建与调试-Windows](https://github.com/codefollower/OpenJDK-Research/blob/master/hotspot/my-docs/%E6%9E%84%E5%BB%BA%E4%B8%8E%E8%B0%83%E8%AF%95-Windows.md)
-
-[构建与调试-Linux(未测试)](https://github.com/codefollower/OpenJDK-Research/blob/master/hotspot/my-docs/%E6%9E%84%E5%BB%BA%E4%B8%8E%E8%B0%83%E8%AF%95-Linux.md)
+[在Windows平台构建与调试HotSpot](https://github.com/codefollower/OpenJDK-Research/blob/master/hotspot/my-docs/%E5%9C%A8Windows%E5%B9%B3%E5%8F%B0%E6%9E%84%E5%BB%BA%E4%B8%8E%E8%B0%83%E8%AF%95HotSpot.md)
 
 
 ## Javac构建与调试
