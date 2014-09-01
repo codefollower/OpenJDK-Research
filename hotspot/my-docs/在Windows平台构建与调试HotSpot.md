@@ -4,7 +4,7 @@
 
 [JDK1.8](http://www.oracle.com/technetwork/java/javase/downloads/index-jsp-138363.html)<br>
 [Cygwin](http://www.cygwin.com/install.html)<br>
-[Microsoft Visual Studio 2010](http://www.microsoft.com/visualstudio/zh-cn/products/2010-editions)<br>
+[Microsoft Visual Studio 2010](http://www.microsoft.com/visualstudio/zh-cn/products/2010-editions) (请下载英文版)<br>
 
 这里就不介绍怎么安装这些软件了，假设安装后的目录名分别是: <br>
 (请根据你的实际情况调整这些目录名）<br>
