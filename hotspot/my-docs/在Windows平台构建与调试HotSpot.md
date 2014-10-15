@@ -29,7 +29,7 @@ git clone https://github.com/codefollower/OpenJDK-Research.git D:\openjdk
 
 D:\VS2010\Common7\Tools\vsvars32.bat <br>
 set HOTSPOTMKSHOME=D:\Cygwin\bin <br>
-create D:\JavaSE1.8 (注: create对应当前目当下的create.bat文件)<br>
+create D:\JavaSE1.8 (注: create对应当前目录下的create.bat文件)<br>
 
 会在D:\openjdk\hotspot\build\vs-i486目录中生成Visual Studio项目文件
 
