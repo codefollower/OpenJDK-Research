@@ -144,6 +144,7 @@ void* Klass::operator new(size_t size, ClassLoaderData* loader_data, size_t word
                              MetaspaceObj::ClassType, CHECK_NULL);
 }
 
+//Klass类总共19个字段，这里只有_class_loader_data字段没有初始化
 Klass::Klass() {
   Klass* k = this;
 

@@ -247,3 +247,5 @@ monitorenter  194 monitorenter  [0x01cc65d0, 0x01cc67b0]  480 bytes
   0x01cc67ae: int3   
   0x01cc67af: int3   
 
+if(mark word ==5) {
+}

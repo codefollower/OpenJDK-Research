@@ -56,7 +56,7 @@ invokestatic  184 invokestatic  [0x07f158f0, 0x07f15a20]  304 bytes
   0x07f1591b: mov    -0x14(%ebp),%ecx //ConstantPoolCache
   0x07f1591e: shl    $0x2,%edx //看后面的长篇注释
   0x07f15921: mov    0x8(%ecx,%edx,4),%ebx //计算ConstantPoolCacheEntry._indices字段的值
-  0x07f15925: shr    $0x10,%ebx
+  0x07f15925: shr    $0x10,%ebx //取ConstantPoolCacheEntry._indices字段中的index
   0x07f15928: and    $0xff,%ebx
 
   0x07f1592e: cmp    $0xb8,%ebx //$0xb8是invokestatic的bytecode值, 如果%ebx的值也是$0xb8, 说明解析过了，跳过resolve_invoke

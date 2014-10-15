@@ -35,12 +35,12 @@
 	  //下面是method_entry_point_zerolocals中由generate_fixed_frame生成的堆栈frame
 	  //－－－－－－－－－－－－－－－－－－－－－－
 	  // -8  -0x20  [ (%esp)               ] //reserve word for pointer to expression stack bottom
-	  // -7  -0x1C  [ 第一个字节码内存地址 ]
+	  // -7  -0x1C  [ 第一个字节码内存地址 ] //如果是invokeXXX指令，那么就是这条invokeXXX指令在内存中的地址
 	  // -6  -0x18  [ argument word 1 所在堆栈位置 ] <--- rdi
 	  // -5  -0x14  [ ConstantPoolCache    ]
 	  // -4  -0x10  [ 0                    ]
 	  // -3  -0xC   [ method               ]
-	  // -2  -0x8   [ 0                    ]
+	  // -2  -0x8   [ 0                    ] //如果是invokeXXX指令，并有除方法参数之外的本地变量，则这里存放本地变量的堆栈位置
 	  // -1  -0x4   [ argument word n 所在堆栈位置 ]
 	  //      0     [ saved rbp,           ] <--- rbp,
 	  //－－－－－－－－－－－－－－－－－－－－－－
@@ -52,7 +52,7 @@
 	  //    [ 0                    ]
 	  //end－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－－
 
-	  //return_from_Java被移动上面了
+	  //return_from_Java被移到上面了
 	  //－－－－－－－－－－－－－－－－－－－－－－
 	  //    [ argument word n      ] <--- rsi
 	  //      ...

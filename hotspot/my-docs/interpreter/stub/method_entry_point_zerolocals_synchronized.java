@@ -223,6 +223,8 @@ method entry point (kind = zerolocals_synchronized)  [0x07f0bdf0, 0x07f0c2f0]  1
 			  0x07f0c0bd: jne    0x07f0c0e9
 
 			  0x07f0c0c3: mov    (%edx),%eax
+			  //$0x1ff对应:
+			  //markOopDesc::biased_lock_mask_in_place | markOopDesc::age_mask_in_place | markOopDesc::epoch_mask_in_place
 			  0x07f0c0c5: and    $0x1ff,%eax
 			  0x07f0c0cb: push   %edx
 
@@ -232,7 +234,7 @@ method entry point (kind = zerolocals_synchronized)  [0x07f0bdf0, 0x07f0c2f0]  1
 
 			  0x07f0c0d7: or     %eax,%edx
 			  //EAX = 00000005 ECX = 0F2CE620 EDX = 00225005 (%ecx) = 00000005
-			  //如果(%ecx)=EAX 那么(%ecx)=EDX=00225005，否则EAX=EDX=00225005
+			  //如果(%ecx)=EAX 那么(%ecx)=EDX=00225005，否则EAX=(%ecx) = 00000005
 			  0x07f0c0d9: lock cmpxchg %edx,(%ecx)
 			  0x07f0c0dd: pop    %edx
 

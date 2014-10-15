@@ -18,7 +18,7 @@ invokespecial  183 invokespecial  [0x01cc57a0, 0x01cc58e0]  320 bytes
   0x01cc57cb: mov    -0x14(%ebp),%ecx
   0x01cc57ce: shl    $0x2,%edx
   0x01cc57d1: mov    0x8(%ecx,%edx,4),%ebx
-  0x01cc57d5: shr    $0x10,%ebx
+  0x01cc57d5: shr    $0x10,%ebx //取ConstantPoolCacheEntry._indices字段中的index
   0x01cc57d8: and    $0xff,%ebx
 
   0x01cc57de: cmp    $0xb7,%ebx
@@ -73,11 +73,15 @@ invokespecial  183 invokespecial  [0x01cc57a0, 0x01cc58e0]  320 bytes
   0x01cc589b: mov    0x14(%ecx,%edx,4),%edx
   0x01cc589f: mov    %edx,%ecx
   0x01cc58a1: and    $0xff,%ecx
-  0x01cc58a7: mov    -0x4(%esp,%ecx,4),%ecx
+  0x01cc58a7: mov    -0x4(%esp,%ecx,4),%ecx //this指针存放在堆栈的位置，总是这第一个参数
   0x01cc58ab: shr    $0x1c,%edx
   0x01cc58ae: mov    0x556277cc(,%edx,4),%edx
   0x01cc58b5: push   %edx
-  0x01cc58b6: cmp    (%ecx),%eax
+
+  //最初%eax的值是this指针，但是在TemplateTable::invokespecial的prepare_invoke中改变了eax的值
+  //这应该是个bug，不过并不影响正确性
+  0x01cc58b6: cmp    (%ecx),%eax //__ null_check(rcx);
+
   0x01cc58b8: lea    0x4(%esp),%esi
   0x01cc58bc: mov    %esi,-0x8(%ebp)
   0x01cc58bf: jmp    *0x34(%ebx)
