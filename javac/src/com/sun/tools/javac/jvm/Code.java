@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2015, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -182,8 +182,6 @@ public class Code {
 
     final MethodSymbol meth;
 
-    final LVTRanges lvtRanges;
-
     /** Construct a code object, given the settings of the fatcode,
      *  debugging info switches and the CharacterRangeTable.
      */
@@ -196,8 +194,7 @@ public class Code {
                 CRTable crt,
                 Symtab syms,
                 Types types,
-                Pool pool,
-                LVTRanges lvtRanges) {
+                Pool pool) {
         this.meth = meth;
         this.fatcode = fatcode;
         this.lineMap = lineMap;
@@ -219,7 +216,6 @@ public class Code {
         state = new State();
         lvar = new LocalVar[20];
         this.pool = pool;
-        this.lvtRanges = lvtRanges;
     }
 
 
@@ -1193,7 +1189,9 @@ public class Code {
     public int entryPoint(State state) {
         int pc = curCP();
         alive = true;
-        this.state = state.dup();
+        State newState = state.dup();
+        setDefined(newState.defined);
+        this.state = newState;
         Assert.check(state.stacksize <= max_stack);
         if (debugCode) System.err.println("entry point " + state);
         pendingStackMap = needStackMap;
@@ -1206,7 +1204,9 @@ public class Code {
     public int entryPoint(State state, Type pushed) {
         int pc = curCP();
         alive = true;
-        this.state = state.dup();
+        State newState = state.dup();
+        setDefined(newState.defined);
+        this.state = newState;
         Assert.check(state.stacksize <= max_stack);
         this.state.push(pushed);
         if (debugCode) System.err.println("entry point " + state);
@@ -1925,6 +1925,13 @@ public class Code {
             return aliveRanges.isEmpty() ? null : aliveRanges.get(aliveRanges.size() - 1);
         }
 
+        void removeLastRange() {
+            Range lastRange = lastRange();
+            if (lastRange != null) {
+                aliveRanges.remove(lastRange);
+            }
+        }
+
         @Override
         public String toString() {
             if (aliveRanges == null) {
@@ -1946,18 +1953,16 @@ public class Code {
             }
         }
 
-        public void closeRange(char end) {
-            if (isLastRangeInitialized()) {
+        public void closeRange(char length) {
+            if (isLastRangeInitialized() && length > 0) {
                 Range range = lastRange();
                 if (range != null) {
                     if (range.length == Character.MAX_VALUE) {
-                        range.length = end;
+                        range.length = length;
                     }
                 }
             } else {
-                if (!aliveRanges.isEmpty()) {
-                    aliveRanges.remove(aliveRanges.size() - 1);
-                }
+                removeLastRange();
             }
         }
 
@@ -1965,16 +1970,14 @@ public class Code {
             if (aliveRanges.isEmpty()) {
                 return false;
             }
-            Range range = lastRange();
-            return range.length == Character.MAX_VALUE;
+            return lastRange().length == Character.MAX_VALUE;
         }
 
         public boolean isLastRangeInitialized() {
             if (aliveRanges.isEmpty()) {
                 return false;
             }
-            Range range = lastRange();
-            return range.start_pc != Character.MAX_VALUE;
+            return lastRange().start_pc != Character.MAX_VALUE;
         }
 
         public Range getWidestRange() {
@@ -2005,36 +2008,13 @@ public class Code {
         state.defined.excl(adr);
     }
 
-
-    public void closeAliveRanges(JCTree tree) {
-        closeAliveRanges(tree, cp);
-    }
-
-    public void closeAliveRanges(JCTree tree, int closingCP) {
-        List<VarSymbol> locals = lvtRanges.getVars(meth, tree);
-        for (LocalVar localVar: lvar) {
-            for (VarSymbol aliveLocal : locals) {
-                if (localVar == null) {
-                    return;
-                }
-                if (localVar.sym == aliveLocal && localVar.lastRange() != null) {
-                    char length = (char)(closingCP - localVar.lastRange().start_pc);
-                    if (length > 0 && length < Character.MAX_VALUE) {
-                        localVar.closeRange(length);
-                    }
-                }
-            }
-        }
-    }
-
     void adjustAliveRanges(int oldCP, int delta) {
         for (LocalVar localVar: lvar) {
-            if (localVar == null) {
-                return;
-            }
-            for (LocalVar.Range range: localVar.aliveRanges) {
-                if (range.closed() && range.start_pc + range.length >= oldCP) {
-                    range.length += delta;
+            if (localVar != null) {
+                for (LocalVar.Range range: localVar.aliveRanges) {
+                    if (range.closed() && range.start_pc + range.length >= oldCP) {
+                        range.length += delta;
+                    }
                 }
             }
         }
@@ -2090,12 +2070,12 @@ public class Code {
             lvar[adr].isLastRangeInitialized()) {
             LocalVar v = lvar[adr];
             char length = (char)(curCP() - v.lastRange().start_pc);
-            if (length > 0 && length < Character.MAX_VALUE) {
+            if (length < Character.MAX_VALUE) {
                 lvar[adr] = v.dup();
                 v.closeRange(length);
                 putVar(v);
             } else {
-                v.lastRange().start_pc = Character.MAX_VALUE;
+                v.removeLastRange();
             }
         }
     }
@@ -2189,10 +2169,14 @@ public class Code {
         // Keep local variables if
         // 1) we need them for debug information
         // 2) it is an exception type and it contains type annotations
-        if (!varDebugInfo &&
-                (!var.sym.isExceptionParameter() ||
-                var.sym.hasTypeAnnotations())) return;
-        if ((var.sym.flags() & Flags.SYNTHETIC) != 0) return;
+        boolean keepLocalVariables = varDebugInfo ||
+            (var.sym.isExceptionParameter() && var.sym.hasTypeAnnotations());
+        if (!keepLocalVariables) return;
+        //don't keep synthetic vars, unless they are lambda method parameters
+        boolean ignoredSyntheticVar = (var.sym.flags() & Flags.SYNTHETIC) != 0 &&
+                ((var.sym.owner.flags() & Flags.LAMBDA_METHOD) == 0 ||
+                 (var.sym.flags() & Flags.PARAMETER) == 0);
+        if (ignoredSyntheticVar) return;
         if (varBuffer == null)
             varBuffer = new LocalVar[20];
         else

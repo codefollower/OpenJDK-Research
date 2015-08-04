@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2012, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -57,6 +57,7 @@ import com.sun.tools.javac.util.Name;
 import com.sun.tools.javac.util.Names;
 import com.sun.tools.javac.util.Options;
 import com.sun.tools.javac.util.Position;
+import com.sun.tools.javac.util.StringUtils;
 import static com.sun.tools.javac.util.LayoutCharacters.*;
 
 /**
@@ -993,7 +994,7 @@ public class DocCommentParser {
                     "h1", "h2", "h3", "h4", "h5", "h6", "p", "pre"));
 
     protected boolean isSentenceBreak(Name n) {
-        return htmlBlockTags.contains(n.toString().toLowerCase());
+        return htmlBlockTags.contains(StringUtils.toLowerCase(n.toString()));
     }
 
     protected boolean isSentenceBreak(DCTree t) {
@@ -1038,7 +1039,7 @@ public class DocCommentParser {
     }
 
     /**
-     * @see <a href="http://docs.oracle.com/javase/7/docs/technotes/tools/solaris/javadoc.html#javadoctags">Javadoc Tags</a>
+     * @see <a href="https://docs.oracle.com/javase/7/docs/technotes/tools/solaris/javadoc.html#javadoctags">Javadoc Tags</a>
      */
     private void initTagParsers() {
         TagParser[] parsers = {
@@ -1172,8 +1173,10 @@ public class DocCommentParser {
                             DCText string = quotedString();
                             if (string != null) {
                                 skipWhitespace();
-                                if (ch == '@')
+                                if (ch == '@'
+                                        || ch == EOI && bp == buf.length - 1) {
                                     return m.at(pos).See(List.<DCTree>of(string));
+                                }
                             }
                             break;
 

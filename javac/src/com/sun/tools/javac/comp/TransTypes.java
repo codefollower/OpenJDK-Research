@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -835,6 +835,8 @@ public class TransTypes extends TreeTranslator {
     public void visitReference(JCMemberReference tree) {
         tree.expr = translate(tree.expr, erasure(tree.expr.type));
         tree.type = erasure(tree.type);
+        if (tree.varargsElement != null)
+            tree.varargsElement = erasure(tree.varargsElement);
         result = tree;
     }
 
@@ -965,10 +967,11 @@ public class TransTypes extends TreeTranslator {
             translateClass((ClassSymbol)st.tsym);
         }
 
-        Env<AttrContext> myEnv = enter.typeEnvs.remove(c);
-        if (myEnv == null) {
+        Env<AttrContext> myEnv = enter.getEnv(c);
+        if (myEnv == null || (c.flags_field & TYPE_TRANSLATED) != 0) {
             return;
         }
+        c.flags_field |= TYPE_TRANSLATED;
 
         /*  The two assertions below are set for early detection of any attempt
          *  to translate a class that:

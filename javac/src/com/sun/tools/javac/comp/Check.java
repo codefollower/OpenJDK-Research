@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -82,6 +82,7 @@ public class Check {
     private final TreeInfo treeinfo;
     private final JavaFileManager fileManager;
     private final Profile profile;
+    private final boolean warnOnAccessToSensitiveMembers;
 
     // The set of lint options currently in effect. It is initialized
     // from the context, and then is set/reset as needed by Attr as it
@@ -131,6 +132,7 @@ public class Check {
         warnOnSyntheticConflicts = options.isSet("warnOnSyntheticConflicts");
         suppressAbortOnBadClassFile = options.isSet("suppressAbortOnBadClassFile");
         enableSunApiLintControl = options.isSet("enableSunApiLintControl");
+        warnOnAccessToSensitiveMembers = options.isSet("warnOnAccessToSensitiveMembers");
 
         Target target = Target.instance(context);
         syntheticNameChar = target.syntheticNameChar();
@@ -510,6 +512,11 @@ public class Check {
         public DeferredAttrContext deferredAttrContext() {
             return deferredAttr.emptyDeferredAttrContext;
         }
+
+        @Override
+        public String toString() {
+            return "CheckContext: basicHandler";
+        }
     };
 
     /** Check that a given type is assignable to a given proto-type.
@@ -524,8 +531,8 @@ public class Check {
 
     Type checkType(final DiagnosticPosition pos, final Type found, final Type req, final CheckContext checkContext) {
         final Infer.InferenceContext inferenceContext = checkContext.inferenceContext();
-        if (inferenceContext.free(req)) {
-            inferenceContext.addFreeTypeListener(List.of(req), new FreeTypeListener() {
+        if (inferenceContext.free(req) || inferenceContext.free(found)) {
+            inferenceContext.addFreeTypeListener(List.of(req, found), new FreeTypeListener() {
                 @Override
                 public void typesInferred(InferenceContext inferenceContext) {
                     checkType(pos, inferenceContext.asInstType(found), inferenceContext.asInstType(req), checkContext);
@@ -611,12 +618,12 @@ public class Check {
          if (a.isUnbound()) {
              return true;
          } else if (!a.hasTag(WILDCARD)) {
-             a = types.upperBound(a);
+             a = types.cvarUpperBound(a);
              return types.isSubtype(a, bound);
          } else if (a.isExtendsBound()) {
-             return types.isCastable(bound, types.upperBound(a), types.noWarnings);
+             return types.isCastable(bound, types.wildUpperBound(a), types.noWarnings);
          } else if (a.isSuperBound()) {
-             return !types.notSoftSubtype(types.lowerBound(a), bound);
+             return !types.notSoftSubtype(types.wildLowerBound(a), bound);
          }
          return true;
      }
@@ -1031,7 +1038,9 @@ public class Check {
 
         switch (sym.kind) {
         case VAR:
-            if (sym.owner.kind != TYP)
+            if (TreeInfo.isReceiverParam(tree))
+                mask = ReceiverParamFlags;
+            else if (sym.owner.kind != TYP)
                 mask = LocalVarFlags;
             else if ((sym.owner.flags_field & INTERFACE) != 0)
                 mask = implicit = InterfaceVarFlags;
@@ -1706,7 +1715,12 @@ public class Check {
 
         // Warn if a deprecated method overridden by a non-deprecated one.
         if (!isDeprecatedOverrideIgnorable(other, origin)) {
-            checkDeprecated(TreeInfo.diagnosticPositionFor(m, tree), m, other);
+            Lint prevLint = setLint(lint.augment(m));
+            try {
+                checkDeprecated(TreeInfo.diagnosticPositionFor(m, tree), m, other);
+            } finally {
+                setLint(prevLint);
+            }
         }
     }
     // where
@@ -1806,6 +1820,11 @@ public class Check {
                                             Type t1,
                                             Type t2,
                                             Type site) {
+        if ((site.tsym.flags() & COMPOUND) != 0) {
+            // special case for intersections: need to eliminate wildcards in supertypes
+            t1 = types.capture(t1);
+            t2 = types.capture(t2);
+        }
         return firstIncompatibility(pos, t1, t2, site) == null;
     }
 
@@ -2030,70 +2049,15 @@ public class Check {
      *  @param c            The class.
      */
     void checkAllDefined(DiagnosticPosition pos, ClassSymbol c) {
-        try {
-            MethodSymbol undef = firstUndef(c, c);
-            if (undef != null) {
-                if ((c.flags() & ENUM) != 0 &&
-                    types.supertype(c.type).tsym == syms.enumSym &&
-                    (c.flags() & FINAL) == 0) {
-                    // add the ABSTRACT flag to an enum
-                    c.flags_field |= ABSTRACT;
-                } else {
-                    MethodSymbol undef1 =
-                        new MethodSymbol(undef.flags(), undef.name,
-                                         types.memberType(c.type, undef), undef.owner);
-                    log.error(pos, "does.not.override.abstract",
-                              c, undef1, undef1.location());
-                }
-            }
-        } catch (CompletionFailure ex) {
-            completionError(pos, ex);
+        MethodSymbol undef = types.firstUnimplementedAbstract(c);
+        if (undef != null) {
+            MethodSymbol undef1 =
+                new MethodSymbol(undef.flags(), undef.name,
+                                 types.memberType(c.type, undef), undef.owner);
+            log.error(pos, "does.not.override.abstract",
+                      c, undef1, undef1.location());
         }
     }
-//where
-        /** Return first abstract member of class `c' that is not defined
-         *  in `impl', null if there is none.
-         */
-        private MethodSymbol firstUndef(ClassSymbol impl, ClassSymbol c) {
-            MethodSymbol undef = null;
-            // Do not bother to search in classes that are not abstract,
-            // since they cannot have abstract members.
-            if (c == impl || (c.flags() & (ABSTRACT | INTERFACE)) != 0) {
-                Scope s = c.members();
-                for (Scope.Entry e = s.elems;
-                     undef == null && e != null;
-                     e = e.sibling) {
-                    if (e.sym.kind == MTH &&
-                        (e.sym.flags() & (ABSTRACT|IPROXY|DEFAULT)) == ABSTRACT) {
-                        MethodSymbol absmeth = (MethodSymbol)e.sym;
-                        MethodSymbol implmeth = absmeth.implementation(impl, types, true);
-                        if (implmeth == null || implmeth == absmeth) {
-                            //look for default implementations
-                            if (allowDefaultMethods) {
-                                MethodSymbol prov = types.interfaceCandidates(impl.type, absmeth).head;
-                                if (prov != null && prov.overrides(absmeth, impl, types, true)) {
-                                    implmeth = prov;
-                                }
-                            }
-                        }
-                        if (implmeth == null || implmeth == absmeth) {
-                            undef = absmeth;
-                        }
-                    }
-                }
-                if (undef == null) {
-                    Type st = types.supertype(c.type);
-                    if (st.hasTag(CLASS))
-                        undef = firstUndef(impl, (ClassSymbol)st.tsym);
-                }
-                for (List<Type> l = types.interfaces(c.type);
-                     undef == null && l.nonEmpty();
-                     l = l.tail) {
-                    undef = firstUndef(impl, (ClassSymbol)l.head.tsym);
-                }
-            }
-            return undef;
-        }
 
     void checkNonCyclicDecl(JCClassDecl tree) {
         CycleChecker cc = new CycleChecker();
@@ -2583,6 +2547,44 @@ public class Check {
         }
     }
 
+    void checkElemAccessFromSerializableLambda(final JCTree tree) {
+        if (warnOnAccessToSensitiveMembers) {
+            Symbol sym = TreeInfo.symbol(tree);
+            if ((sym.kind & (VAR | MTH)) == 0) {
+                return;
+            }
+
+            if (sym.kind == VAR) {
+                if ((sym.flags() & PARAMETER) != 0 ||
+                    sym.isLocal() ||
+                    sym.name == names._this ||
+                    sym.name == names._super) {
+                    return;
+                }
+            }
+
+            if (!types.isSubtype(sym.owner.type, syms.serializableType) &&
+                    isEffectivelyNonPublic(sym)) {
+                log.warning(tree.pos(),
+                        "access.to.sensitive.member.from.serializable.element", sym);
+            }
+        }
+    }
+
+    private boolean isEffectivelyNonPublic(Symbol sym) {
+        if (sym.packge() == syms.rootPackage) {
+            return false;
+        }
+
+        while (sym.kind != Kinds.PCK) {
+            if ((sym.flags() & PUBLIC) == 0) {
+                return true;
+            }
+            sym = sym.owner;
+        }
+        return false;
+    }
+
     /** Report a conflict between a user symbol and a synthetic symbol.
      */
     private void syntheticError(DiagnosticPosition pos, Symbol sym) {
@@ -2627,7 +2629,7 @@ public class Check {
                 checkClassBounds(pos, seensofar, it);
             }
             Type st = types.supertype(type);
-            if (st != null) checkClassBounds(pos, seensofar, st);
+            if (st != Type.noType) checkClassBounds(pos, seensofar, st);
         }
 
     /** Enter interface into into set.
@@ -2680,7 +2682,7 @@ public class Check {
         if (types.isSameType(type, syms.stringType)) return;
         if ((type.tsym.flags() & Flags.ENUM) != 0) return;
         if ((type.tsym.flags() & Flags.ANNOTATION) != 0) return;
-        if (types.lowerBound(type).tsym == syms.classType.tsym) return;
+        if (types.cvarLowerBound(type).tsym == syms.classType.tsym) return;
         if (types.isArray(type) && !types.isArray(types.elemtype(type))) {
             validateAnnotationType(pos, types.elemtype(type));
             return;
@@ -2779,7 +2781,7 @@ public class Check {
         validateDocumented(t.tsym, s, pos);
         validateInherited(t.tsym, s, pos);
         validateTarget(t.tsym, s, pos);
-        validateDefault(t.tsym, s, pos);
+        validateDefault(t.tsym, pos);
     }
 
     private void validateValue(TypeSymbol container, TypeSymbol contained, DiagnosticPosition pos) {
@@ -2898,7 +2900,9 @@ public class Check {
 
 
     /** Checks that s is a subset of t, with respect to ElementType
-     * semantics, specifically {ANNOTATION_TYPE} is a subset of {TYPE}
+     * semantics, specifically {ANNOTATION_TYPE} is a subset of {TYPE},
+     * and {TYPE_USE} covers the set {ANNOTATION_TYPE, TYPE, TYPE_USE,
+     * TYPE_PARAMETER}.
      */
     private boolean isTargetSubsetOf(Set<Name> s, Set<Name> t) {
         // Check that all elements in s are present in t
@@ -2911,6 +2915,12 @@ public class Check {
                 } else if (n1 == names.TYPE && n2 == names.ANNOTATION_TYPE) {
                     currentElementOk = true;
                     break;
+                } else if (n1 == names.TYPE_USE &&
+                        (n2 == names.TYPE ||
+                         n2 == names.ANNOTATION_TYPE ||
+                         n2 == names.TYPE_PARAMETER)) {
+                    currentElementOk = true;
+                    break;
                 }
             }
             if (!currentElementOk)
@@ -2919,7 +2929,7 @@ public class Check {
         return true;
     }
 
-    private void validateDefault(Symbol container, Symbol contained, DiagnosticPosition pos) {
+    private void validateDefault(Symbol container, DiagnosticPosition pos) {
         // validate that all other elements of containing type has defaults
         Scope scope = container.members();
         for(Symbol elm : scope.getElements()) {

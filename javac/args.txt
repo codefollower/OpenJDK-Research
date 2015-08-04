@@ -12,11 +12,11 @@
 #-XDcompilePolicy=check
 
 -Xjcov
--d target\classes
+-d target\javac_classes
 #-Xlint:deprecation,path
 #-Xlint:path
 -Xlint
--classpath .;src;target\classes
+-classpath .;src;target\javac_classes
 
 
 #-source 1.4

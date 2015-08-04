@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -392,7 +392,7 @@ public abstract class Symbol extends AnnoConstruct implements Element {
     /** A class is an inner class if it it has an enclosing instance class.
      */
     public boolean isInner() {
-        return type.getEnclosingType().hasTag(CLASS);
+        return kind == TYP && type.getEnclosingType().hasTag(CLASS);
     }
 
     /** An inner class has an outer instance if it is not an interface
@@ -467,11 +467,24 @@ public abstract class Symbol extends AnnoConstruct implements Element {
 
     private boolean hiddenIn(ClassSymbol clazz, Types types) {
         Symbol sym = hiddenInInternal(clazz, types);
-        return sym != null && sym != this;
+        Assert.check(sym != null, "the result of hiddenInInternal() can't be null");
+        /* If we find the current symbol then there is no symbol hiding it
+         */
+        return sym != this;
     }
 
-    private Symbol hiddenInInternal(ClassSymbol c, Types types) {
-        Scope.Entry e = c.members().lookup(name);
+    /** This method looks in the supertypes graph that has the current class as the
+     * initial node, till it finds the current symbol or another symbol that hides it.
+     * If the current class has more than one supertype (extends one class and
+     * implements one or more interfaces) then null can be returned, meaning that
+     * a wrong path in the supertypes graph was selected. Null can only be returned
+     * as a temporary value, as a result of the recursive call.
+     */
+    private Symbol hiddenInInternal(ClassSymbol currentClass, Types types) {
+        if (currentClass == owner) {
+            return this;
+        }
+        Scope.Entry e = currentClass.members().lookup(name);
         while (e.scope != null) {
             if (e.sym.kind == kind &&
                     (kind != MTH ||
@@ -481,18 +494,19 @@ public abstract class Symbol extends AnnoConstruct implements Element {
             }
             e = e.next();
         }
-        List<Symbol> hiddenSyms = List.nil();
-        for (Type st : types.interfaces(c.type).prepend(types.supertype(c.type))) {
+        Symbol hiddenSym = null;
+        for (Type st : types.interfaces(currentClass.type)
+                .prepend(types.supertype(currentClass.type))) {
             if (st != null && (st.hasTag(CLASS))) {
                 Symbol sym = hiddenInInternal((ClassSymbol)st.tsym, types);
-                if (sym != null) {
-                    hiddenSyms = hiddenSyms.prepend(hiddenInInternal((ClassSymbol)st.tsym, types));
+                if (sym == this) {
+                    return this;
+                } else if (sym != null) {
+                    hiddenSym = sym;
                 }
             }
         }
-        return hiddenSyms.contains(this) ?
-                this :
-                (hiddenSyms.isEmpty() ? null : hiddenSyms.head);
+        return hiddenSym;
     }
 
     /** Is this symbol inherited into a given class?
@@ -689,10 +703,10 @@ public abstract class Symbol extends AnnoConstruct implements Element {
         }
 
         /**
-         * A total ordering between type symbols that refines the
+         * A partial ordering between type symbols that refines the
          * class inheritance graph.
          *
-         * Typevariables always precede other kinds of symbols.
+         * Type variables always precede other kinds of symbols.
          */
         public final boolean precedes(TypeSymbol that, Types types) {
             if (this == that)
@@ -765,42 +779,41 @@ public abstract class Symbol extends AnnoConstruct implements Element {
 
         @Override
         public List<Attribute.Compound> getAnnotationMirrors() {
-            return onlyTypeVariableAnnotations(owner.getRawTypeAttributes());
-        }
-
-        private List<Attribute.Compound> onlyTypeVariableAnnotations(
-                List<Attribute.TypeCompound> candidates) {
-            // Declaration annotations on TypeParameters are stored in type attributes
+            // Declaration annotations on type variables are stored in type attributes
+            // on the owner of the TypeVariableSymbol
+            List<Attribute.TypeCompound> candidates = owner.getRawTypeAttributes();
+            int index = owner.getTypeParameters().indexOf(this);
             List<Attribute.Compound> res = List.nil();
             for (Attribute.TypeCompound a : candidates) {
-                if (a.position.type == TargetType.CLASS_TYPE_PARAMETER ||
-                    a.position.type == TargetType.METHOD_TYPE_PARAMETER)
+                if (isCurrentSymbolsAnnotation(a, index))
                     res = res.prepend(a);
             }
 
-            return res = res.reverse();
+            return res.reverse();
         }
-
-
 
         // Helper to getAnnotation[s]
         @Override
         public <A extends Annotation> Attribute.Compound getAttribute(Class<A> annoType) {
-
             String name = annoType.getName();
 
             // Declaration annotations on type variables are stored in type attributes
             // on the owner of the TypeVariableSymbol
             List<Attribute.TypeCompound> candidates = owner.getRawTypeAttributes();
+            int index = owner.getTypeParameters().indexOf(this);
             for (Attribute.TypeCompound anno : candidates)
-                if (anno.position.type == TargetType.CLASS_TYPE_PARAMETER ||
-                        anno.position.type == TargetType.METHOD_TYPE_PARAMETER)
-                    if (name.contentEquals(anno.type.tsym.flatName()))
-                        return anno;
+                if (isCurrentSymbolsAnnotation(anno, index) &&
+                    name.contentEquals(anno.type.tsym.flatName()))
+                    return anno;
 
             return null;
         }
-
+            //where:
+            boolean isCurrentSymbolsAnnotation(Attribute.TypeCompound anno, int index) {
+                return (anno.position.type == TargetType.CLASS_TYPE_PARAMETER ||
+                        anno.position.type == TargetType.METHOD_TYPE_PARAMETER) &&
+                       anno.position.parameter_index == index;
+            }
 
 
         @Override
@@ -1139,6 +1152,16 @@ public abstract class Symbol extends AnnoConstruct implements Element {
 
         public <R, P> R accept(Symbol.Visitor<R, P> v, P p) {
             return v.visitClassSymbol(this, p);
+        }
+
+        public void markAbstractIfNeeded(Types types) {
+            if (types.enter.getEnv(this) != null &&
+                (flags() & ENUM) != 0 && types.supertype(type).tsym == types.syms.enumSym &&
+                (flags() & (FINAL | ABSTRACT)) == 0) {
+                if (types.firstUnimplementedAbstract(this) != null)
+                    // add the ABSTRACT flag to an enum
+                    flags_field |= ABSTRACT;
+            }
         }
     }
 

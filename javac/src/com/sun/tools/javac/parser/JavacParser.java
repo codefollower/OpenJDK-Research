@@ -161,6 +161,7 @@ public class JavacParser implements Parser {
         this.allowStaticInterfaceMethods = source.allowStaticInterfaceMethods();
         this.allowIntersectionTypesInCast = source.allowIntersectionTypesInCast();
         this.allowTypeAnnotations = source.allowTypeAnnotations();
+        this.allowAnnotationsAfterTypeParams = source.allowAnnotationsAfterTypeParams();
         this.keepDocComments = keepDocComments;
         docComments = newDocCommentTable(keepDocComments, fac);
         this.keepLineMap = keepLineMap;
@@ -253,6 +254,10 @@ public class JavacParser implements Parser {
     /** Switch: should we recognize type annotations?
      */
     boolean allowTypeAnnotations;
+
+    /** Switch: should we allow annotations after the method type parameters?
+     */
+    boolean allowAnnotationsAfterTypeParams;
 
     /** Switch: is "this" allowed as an identifier?
      * This is needed to parse receiver types.
@@ -2020,7 +2025,7 @@ public class JavacParser implements Parser {
     /** Creator = [Annotations] Qualident [TypeArguments] ( ArrayCreatorRest | ClassCreatorRest )
      */
     JCExpression creator(int newpos, List<JCExpression> typeArgs) {
-        List<JCAnnotation> newAnnotations = annotationsOpt(Tag.ANNOTATION);
+        List<JCAnnotation> newAnnotations = typeAnnotationsOpt();
 
         switch (token.kind) {
         case BYTE: case SHORT: case CHAR: case INT: case LONG: case FLOAT:
@@ -2715,7 +2720,7 @@ public class JavacParser implements Parser {
         } else {
             JCExpression t = term(EXPR | TYPE);
             if ((lastmode & TYPE) != 0 && LAX_IDENTIFIER.accepts(token.kind)) {
-                return variableDeclarators(modifiersOpt(), t, stats).toList();
+                return variableDeclarators(mods(pos, 0, List.<JCAnnotation>nil()), t, stats).toList();
             } else if ((lastmode & TYPE) != 0 && token.kind == COLON) {
                 error(pos, "bad.initializer", "for-loop");
                 return List.of((JCStatement)F.at(pos).VarDef(null, null, t, null));
@@ -2824,16 +2829,20 @@ public class JavacParser implements Parser {
         default: break;
         }
 
-        /* A modifiers tree with no modifier tokens or annotations
-         * has no text position. */
-        if ((flags & (Flags.ModifierFlags | Flags.ANNOTATION)) == 0 && annotations.isEmpty())
-            pos = Position.NOPOS;
-
-        JCModifiers mods = F.at(pos).Modifiers(flags, annotations.toList());
-        if (pos != Position.NOPOS)
-            storeEnd(mods, S.prevToken().endPos);
-        return mods;
+        return mods(pos, flags, annotations.toList());
     }
+    //where
+        JCModifiers mods(int pos, long flags, List<JCAnnotation> annotations) {
+            /* A modifiers tree with no modifier tokens or annotations
+             * has no text position. */
+            if ((flags & (Flags.ModifierFlags | Flags.ANNOTATION)) == 0 && annotations.isEmpty())
+                pos = Position.NOPOS;
+
+            JCModifiers mods = F.at(pos).Modifiers(flags, annotations);
+            if (pos != Position.NOPOS)
+                storeEnd(mods, S.prevToken().endPos);
+            return mods;
+        }
 
     /** Annotation              = "@" Qualident [ "(" AnnotationFieldValues ")" ]
      *
@@ -3401,16 +3410,28 @@ public class JavacParser implements Parser {
      *    | ModifiersOpt
      *      ( Type Ident
      *        ( VariableDeclaratorsRest ";" | MethodDeclaratorRest )
-     *      | VOID Ident MethodDeclaratorRest
-     *      | TypeParameters (Type | VOID) Ident MethodDeclaratorRest
+     *      | VOID Ident VoidMethodDeclaratorRest
+     *      | TypeParameters [Annotations]
+     *        ( Type Ident MethodDeclaratorRest
+     *        | VOID Ident VoidMethodDeclaratorRest
+     *        )
      *      | Ident ConstructorDeclaratorRest
      *      | TypeParameters Ident ConstructorDeclaratorRest
      *      | ClassOrInterfaceOrEnumDeclaration
      *      )
      *  InterfaceBodyDeclaration =
      *      ";"
-     *    | ModifiersOpt Type Ident
-     *      ( ConstantDeclaratorsRest | InterfaceMethodDeclaratorRest ";" )
+     *    | ModifiersOpt
+     *      ( Type Ident
+     *        ( ConstantDeclaratorsRest ";" | MethodDeclaratorRest )
+     *      | VOID Ident MethodDeclaratorRest
+     *      | TypeParameters [Annotations]
+     *        ( Type Ident MethodDeclaratorRest
+     *        | VOID Ident VoidMethodDeclaratorRest
+     *        )
+     *      | ClassOrInterfaceOrEnumDeclaration
+     *      )
+     *
      */
     protected List<JCTree> classOrInterfaceBodyDeclaration(Name className, boolean isInterface) {
         if (token.kind == SEMI) {
@@ -3439,27 +3460,29 @@ public class JavacParser implements Parser {
                 }
                 List<JCAnnotation> annosAfterParams = annotationsOpt(Tag.ANNOTATION);
 
+                if (annosAfterParams.nonEmpty()) {
+                    checkAnnotationsAfterTypeParams(annosAfterParams.head.pos);
+                    mods.annotations = mods.annotations.appendList(annosAfterParams);
+                    if (mods.pos == Position.NOPOS)
+                        mods.pos = mods.annotations.head.pos;
+                }
+
                 Token tk = token;
                 pos = token.pos;
                 JCExpression type;
                 boolean isVoid = token.kind == VOID;
                 if (isVoid) {
-                    if (annosAfterParams.nonEmpty())
-                        illegal(annosAfterParams.head.pos);
                     type = to(F.at(pos).TypeIdent(TypeTag.VOID));
                     nextToken();
                 } else {
-                    if (annosAfterParams.nonEmpty()) {
-                        mods.annotations = mods.annotations.appendList(annosAfterParams);
-                        if (mods.pos == Position.NOPOS)
-                            mods.pos = mods.annotations.head.pos;
-                    }
                     // method returns types are un-annotated types
                     type = unannotatedType();
                 }
                 if (token.kind == LPAREN && !isInterface && type.hasTag(IDENT)) {
                     if (isInterface || tk.name() != className)
                         error(pos, "invalid.meth.decl.ret.type.req");
+                    else if (annosAfterParams.nonEmpty())
+                        illegal(annosAfterParams.head.pos);
                     return List.of(methodDeclaratorRest(
                         pos, mods, null, names.init, typarams,
                         isInterface, true, dc));
@@ -3491,13 +3514,9 @@ public class JavacParser implements Parser {
     }
 
     /** MethodDeclaratorRest =
-     *      FormalParameters BracketsOpt [Throws TypeList] ( MethodBody | [DEFAULT AnnotationValue] ";")
+     *      FormalParameters BracketsOpt [THROWS TypeList] ( MethodBody | [DEFAULT AnnotationValue] ";")
      *  VoidMethodDeclaratorRest =
-     *      FormalParameters [Throws TypeList] ( MethodBody | ";")
-     *  InterfaceMethodDeclaratorRest =
-     *      FormalParameters BracketsOpt [THROWS TypeList] ";"
-     *  VoidInterfaceMethodDeclaratorRest =
-     *      FormalParameters [THROWS TypeList] ";"
+     *      FormalParameters [THROWS TypeList] ( MethodBody | ";")
      *  ConstructorDeclaratorRest =
      *      "(" FormalParameterListOpt ")" [THROWS TypeList] MethodBody
      */
@@ -4041,21 +4060,28 @@ public class JavacParser implements Parser {
             allowTypeAnnotations = true;
         }
     }
+    void checkAnnotationsAfterTypeParams(int pos) {
+        if (!allowAnnotationsAfterTypeParams) {
+            log.error(pos, "annotations.after.type.params.not.supported.in.source", source.name);
+            allowAnnotationsAfterTypeParams = true;
+        }
+    }
 
     /*
      * a functional source tree and end position mappings
      */
     protected static class SimpleEndPosTable extends AbstractEndPosTable {
 
-        private final Map<JCTree, Integer> endPosMap;
+        private final IntHashTable endPosMap;
 
         SimpleEndPosTable(JavacParser parser) {
             super(parser);
-            endPosMap = new HashMap<JCTree, Integer>();
+            endPosMap = new IntHashTable();
         }
 
         public void storeEnd(JCTree tree, int endpos) {
-            endPosMap.put(tree, errorEndPos > endpos ? errorEndPos : endpos);
+            endPosMap.putAtIndex(tree, errorEndPos > endpos ? errorEndPos : endpos,
+                                 endPosMap.lookup(tree));
         }
 
         protected <T extends JCTree> T to(T t) {
@@ -4069,14 +4095,15 @@ public class JavacParser implements Parser {
         }
 
         public int getEndPos(JCTree tree) {
-            Integer value = endPosMap.get(tree);
-            return (value == null) ? Position.NOPOS : value;
+            int value = endPosMap.getFromIndex(endPosMap.lookup(tree));
+            // As long as Position.NOPOS==-1, this just returns value.
+            return (value == -1) ? Position.NOPOS : value;
         }
 
         public int replaceTree(JCTree oldTree, JCTree newTree) {
-            Integer pos = endPosMap.remove(oldTree);
-            if (pos != null) {
-                endPosMap.put(newTree, pos);
+            int pos = endPosMap.remove(oldTree);
+            if (pos != -1) {
+                storeEnd(newTree, pos);
                 return pos;
             }
             return Position.NOPOS;

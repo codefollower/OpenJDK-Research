@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -82,6 +82,7 @@ public class Lower extends TreeTranslator {
     private ConstFold cfolder;
     private Target target;
     private Source source;
+    private final TypeEnvs typeEnvs;
     private boolean allowEnums;
     private final Name dollarAssertionsDisabled;
     private final Name classDollar;
@@ -103,6 +104,7 @@ public class Lower extends TreeTranslator {
         cfolder = ConstFold.instance(context);
         target = Target.instance(context);
         source = Source.instance(context);
+        typeEnvs = TypeEnvs.instance(context);
         allowEnums = source.allowEnums();
         dollarAssertionsDisabled = names.
             fromString(target.syntheticNameChar() + "assertionsDisabled");
@@ -2360,6 +2362,7 @@ public class Lower extends TreeTranslator {
     /** Visitor method: Translate a single node.
      *  Attach the source position from the old tree to its replacement tree.
      */
+    @Override
     public <T extends JCTree> T translate(T tree) {
         if (tree == null) {
             return null;
@@ -2451,10 +2454,16 @@ public class Lower extends TreeTranslator {
     }
 
     public void visitClassDef(JCClassDecl tree) {
+        Env<AttrContext> prevEnv = attrEnv;
         ClassSymbol currentClassPrev = currentClass;
         MethodSymbol currentMethodSymPrev = currentMethodSym;
+
         currentClass = tree.sym;
         currentMethodSym = null;
+        attrEnv = typeEnvs.remove(currentClass);
+        if (attrEnv == null)
+            attrEnv = prevEnv;
+
         classdefs.put(currentClass, tree);
 
         proxies = proxies.dup(currentClass);
@@ -2526,11 +2535,12 @@ public class Lower extends TreeTranslator {
         // Append translated tree to `translated' queue.
         translated.append(tree);
 
+        attrEnv = prevEnv;
         currentClass = currentClassPrev;
         currentMethodSym = currentMethodSymPrev;
 
         // Return empty block {} as a placeholder for an inner class.
-        result = make_at(tree.pos()).Block(0, List.<JCStatement>nil());
+        result = make_at(tree.pos()).Block(SYNTHETIC, List.<JCStatement>nil());
     }
 
     /** Translate an enum class. */
@@ -3471,7 +3481,7 @@ public class Lower extends TreeTranslator {
         private void visitIterableForeachLoop(JCEnhancedForLoop tree) {
             make_at(tree.expr.pos());
             Type iteratorTarget = syms.objectType;
-            Type iterableType = types.asSuper(types.upperBound(tree.expr.type),
+            Type iterableType = types.asSuper(types.cvarUpperBound(tree.expr.type),
                                               syms.iterableType.tsym);
             if (iterableType.getTypeArguments().nonEmpty())
                 iteratorTarget = types.erasure(iterableType.getTypeArguments().head);
@@ -3505,7 +3515,7 @@ public class Lower extends TreeTranslator {
                                        List.<Type>nil());
             JCExpression vardefinit = make.App(make.Select(make.Ident(itvar), next));
             if (tree.var.type.isPrimitive())
-                vardefinit = make.TypeCast(types.upperBound(iteratorTarget), vardefinit);
+                vardefinit = make.TypeCast(types.cvarUpperBound(iteratorTarget), vardefinit);
             else
                 vardefinit = make.TypeCast(tree.var.type, vardefinit);
             JCVariableDecl indexDef = (JCVariableDecl)make.VarDef(tree.var.mods,
