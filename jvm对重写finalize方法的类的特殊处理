@@ -1,0 +1,617 @@
+假设我们有一个java类：
+
+public class B{
+	public void finalize(){
+		System.out.println("hello");
+	}
+}
+
+当我们主动用java代码加载这个B的class文件的时候必然调用native的方法
+
+ClassLoader.java下面的三个方法：
+
+private native Class<?> defineClass0(String name, byte[] b, int off, int len, ProtectionDomain pd);
+private native Class<?> defineClass1(String name, byte[] b, int off, int len,  ProtectionDomain pd, String source);
+private native Class<?> defineClass2(String name, java.nio.ByteBuffer b, int off, int len, ProtectionDomain pd, String source);
+
+以defineClass0为例对应JNI代码：
+
+JNIEXPORT jclass JNICALL Java_java_lang_ClassLoader_defineClass0(JNIEnv *env, jobject loader, jstring name, jbyteArray data,  jint offset, jint length,  jobject pd){
+    return Java_java_lang_ClassLoader_defineClass1(env, loader, name, data, offset, length, pd, NULL);
+}
+
+然后一路调用下去，在此黏上调用栈：
+
+Klass::set_has_finalizer() : void
+	ClassFileParser::set_precomputed_flags(instanceKlassHandle) : void
+		ClassFileParser::parseClassFile(Symbol *, ClassLoaderData *, Handle, KlassHandle, GrowableArray<Handle> *, TempNewSymbol &, bool, Thread *) : instanceKlassHandle
+			ClassFileParser::parseClassFile(Symbol *, ClassLoaderData *, Handle, TempNewSymbol &, bool, Thread *) : instanceKlassHandle
+				SystemDictionary::resolve_from_stream(Symbol *, Handle, Handle, ClassFileStream *, bool, Thread *) : Klass *
+					jvm_define_class_common(JNIEnv *, const char *, jobject, const jbyte *, jsize, jobject, const char *, jboolean, Thread *) : jclass
+						JVM_DefineClassWithSource(JNIEnv *, const char *, jobject, const jbyte *, jsize, jobject, const char *) : ?
+							Java_java_lang_ClassLoader_defineClass1(JNIEnv *, jobject, jstring, jbyteArray, jint, jint, jobject, jstring) : jclass
+								Java_java_lang_ClassLoader_defineClass0(JNIEnv *, jobject, jstring, jbyteArray, jint, jint, jobject) : jclass
+
+如上所示，最终jvm解析class文件发现这个class覆盖了finalize()方法，所以将这个Class的_access_flags的has_finalizer标记位赋值为true，这样这个类加载过程对finalzie的特殊处理也就这样了。
+接下来创建这个Class实例的时候，也就是执行java代码:
+
+B bubbo = new B();
+
+以模板解释器为例，也就是  "new"字节码时会如此调用栈：
+
+InstanceKlass::allocate_instance(Thread *) : instanceOop
+	InterpreterRuntime::_new(JavaThread *, ConstantPool *, int) : void
+		TemplateTable::_new() : void
+
+当执行一个new 字节码的时候会按照调用栈调用到InstanceKlass::allocate_instance，那么如代码：
+
+instanceOop InstanceKlass::allocate_instance(Thread* __the_thread__) {
+  bool has_finalizer_flag = has_finalizer(); // Query before possible GC
+  int size = size_helper();  // Query before forming handle.
+  KlassHandle h_k(THREAD, this);
+  instanceOop i;
+  i = (instanceOop)CollectedHeap::obj_allocate(h_k, size, CHECK_NULL);
+  if (has_finalizer_flag && !RegisterFinalizersAtInit) {
+    i = register_finalizer(i, CHECK_NULL);
+  }
+  return i;
+}
+
+看到了先判断这个Class有没有复写finalize函数，如果有则i = register_finalizer(i, CHECK_NULL)，进入代码：
+
+instanceOop InstanceKlass::register_finalizer(instanceOop i, TRAPS) {
+  instanceHandle h_i(THREAD, i);
+  JavaValue result(T_VOID);
+  JavaCallArguments args(h_i);
+  methodHandle mh (THREAD, Universe::finalizer_register_method());
+  JavaCalls::call(&result, mh, &args, CHECK_NULL);
+  return h_i();
+}
+
+我们看到，其实这个注册finalize的操作实际上是反调用了一个java类的方法，查找代码为java.lang.ref.Finalizer类，这个类是一个包内可见的类，所以我们java码农一般不会在意它，下面jvm调用它的一个方法，代码非常简单：
+
+/* Invoked by VM */
+static void register(Object finalizee) {
+    new Finalizer(finalizee);
+}
+
+仅仅是new了一个java的对象，Finalizer的实例，这个finalizee其实就是我们刚才new的B对象, 下面看一下这个Finalizer类到底是什么：
+
+final class Finalizer extends FinalReference<Object> {
+	private static ReferenceQueue<Object> queue = new ReferenceQueue<>();
+    private static Finalizer unfinalized = null;
+    private static final Object lock = new Object();
+    
+    private Finalizer next = null;
+    private Finalizer prev = null;
+}
+
+是一个referrance，jvm特殊处理的引用类型一共有五种soft, weak, phantom, final, cleaner五种引用类型，这个FinalReference就是其中一种，所以在jvm做垃圾回收的时候会对它new Finalizer(finalizee)做特殊处理。
+总结，当new一个覆盖了finalize方法的实例时，同时会new一个FinalReference，
+
+然后Finalizer构造函数执行下列操作：
+private Finalizer(Object finalizee) {
+   super(finalizee, queue);
+   add();
+}
+然后：
+private void add() {
+    synchronized (lock) {
+        if (unfinalized != null) {
+            this.next = unfinalized;
+            unfinalized.prev = this;
+        }
+        unfinalized = this;
+    }
+}
+
+实际上把自己加入到private static Finalizer unfinalized = null;这个链表当中，等待下一步处理。
+
+同时也不要忘记我们的Finalizer的父类Reference类，里面自启动一个线程，这个线程，在jvm初始化阶段就会启动，看代码：
+
+private static class ReferenceHandler extends Thread {
+    ReferenceHandler(ThreadGroup g, String name) {
+        super(g, name);
+    }
+    public void run() {
+        for (;;) {
+            Reference<Object> r;
+            synchronized (lock) {
+如果有pending的引用类型，那就把它送给r变量，然后塞进queue里面
+                if (pending != null) {
+                    r = pending;
+                    pending = r.discovered;
+                    r.discovered = null;
+                } else {
+ 如果没有pending的引用变量，那必然不需要改什么东西啊，等待有pending为止。
+                    try {
+                        try {
+                            lock.wait();
+                        } catch (OutOfMemoryError x) { }
+                    } catch (InterruptedException x) { }
+                    continue;
+                }
+            }
+
+            // Fast path for cleaners
+            if (r instanceof Cleaner) {
+                ((Cleaner)r).clean();
+                continue;
+            }
+现在把pending的引用塞进queue吧。
+            ReferenceQueue<Object> q = r.queue;
+            if (q != ReferenceQueue.NULL) q.enqueue(r);
+        }
+    }
+}
+
+lock.wait();是一个wait的操作，那必然有一个notify操作与其匹配，遗憾的是这个notify操作不在java代码里，而是在jvm代码中，简单粘一段吧：
+void InstanceRefKlass::release_and_notify_pending_list_lock(BasicLock *pending_list_basic_lock) {
+  Thread* __the_thread__; 
+  PreserveExceptionMark __em(__the_thread__);
+    
+  HandleMark hm;
+
+  Handle h_lock(THREAD, java_lang_ref_Reference::pending_list_lock());
+  // Notify waiters on pending lists lock if there is any reference.
+  if (java_lang_ref_Reference::pending_list() != NULL) {
+    ObjectSynchronizer::notifyall(h_lock, THREAD);
+  }
+  ObjectSynchronizer::fast_exit(h_lock(), pending_list_basic_lock, THREAD);
+  if (HAS_PENDING_EXCEPTION) CLEAR_PENDING_EXCEPTION;
+}
+
+看代码就知道了，当jvm里的pending_list()不为null的时候，就会notify这个lock，然后释放锁，具体代码不往里看了,这步操作实际是在gc完成之后才会做，所以gc之后pending变量才会有值。
+
+那pending变量到底是什么呢？他是一个链表，等待被加入到queue里面，是jvm在gc的时候插入新元素的，稍后来说明这个pending怎么插入新元素的，还有transient private Reference<T> discovered;变量相当于链表中next指针。
+那么接上刚才的java代码，notify之后if (pending != null) 这个判断就会Reference<Object> r;为pending的值然后在下面
+	ReferenceQueue<Object> q = r.queue;
+	if (q != ReferenceQueue.NULL) q.enqueue(r);
+把pending的东西塞进queue里面，这个queue就是Finalizer里面的静态变量private static ReferenceQueue<Object> queue = new ReferenceQueue<>();，
+
+然后不要忘记除了Reference类有一个自启动线程外，Finalizer类也有一个自启动线程，代码：
+private static class FinalizerThread extends Thread {
+    private volatile boolean running;
+    
+    FinalizerThread(ThreadGroup g) {
+        super(g, "Finalizer");
+    }
+    public void run() {
+        if (running)
+            return;
+        // Finalizer thread starts before System.initializeSystemClass
+        // is called.  Wait until JavaLangAccess is available
+        while (!VM.isBooted()) {
+            // delay until VM completes initialization
+            try {
+                VM.awaitBooted();
+            } catch (InterruptedException x) {
+                // ignore and continue
+            }
+        }
+        final JavaLangAccess jla = SharedSecrets.getJavaLangAccess();
+        running = true;
+        for (;;) {
+            try {
+                Finalizer f = (Finalizer)queue.remove();
+                f.runFinalizer(jla);
+            } catch (InterruptedException x) {
+                // ignore and continue
+            }
+        }
+    }
+}
+看代码就知道了，这个线程的作用就是从queue里面不停地拿一个个Finalizer，然后执行Finalizer的referrent变量也就是new B()的finalize方法。
+此时finalize方法执行完了，我们的析构也就结束了。
+但是还不清楚的一点是这个Reference.pending列表怎么往里添加东西呢？谁来添加？何时来添加？这就要看jvm的垃圾回收系统了。
+
+假如，我们的业务代码使用完这个bubbo对象，把他的引用bubbo=null;，那么没有其他变量显示的引用它了，它就该被jvm回收了，但是别忘了，还有一个游离的Finalizer对象还对它有引用.那么在gc的时候，以默认的parallelscavenge为例：
+
+当我们使用java的System.gc();的时候会调用jni方法：首先：
+
+JVM_ENTRY_NO_ENV(void, JVM_GC(void))
+  JVMWrapper("JVM_GC");
+  if (!DisableExplicitGC) {
+    Universe::heap()->collect(GCCause::_java_lang_system_gc);
+  }
+JVM_END
+
+然后：
+
+void ParallelScavengeHeap::collect(GCCause::Cause cause) {
+  unsigned int gc_count      = 0;
+  unsigned int full_gc_count = 0;
+  {
+    MutexLocker ml(Heap_lock);
+    // This value is guarded by the Heap_lock
+    gc_count      = Universe::heap()->total_collections();
+    full_gc_count = Universe::heap()->total_full_collections();
+  }
+
+  VM_ParallelGCSystemGC op(gc_count, full_gc_count, cause);
+  VMThread::execute(&op);
+}
+
+然后开启vmthread，而不是我们的javathread来进行gc操作，进入到：
+void VM_ParallelGCSystemGC::doit() {
+  SvcGCMarker sgcm(SvcGCMarker::FULL);
+
+  ParallelScavengeHeap* heap = (ParallelScavengeHeap*)Universe::heap();
+
+  GCCauseSetter gccs(heap, _gc_cause);
+  if (_gc_cause == GCCause::_gc_locker || _gc_cause == GCCause::_wb_young_gc) {
+    // If (and only if) the scavenge fails, this will invoke a full gc.
+    heap->invoke_scavenge();
+  } else {
+    heap->do_full_collection(false);
+  }
+}
+
+再然后进入到 heap->do_full_collection(false);
+
+void ParallelScavengeHeap::do_full_collection(bool clear_all_soft_refs) {
+  if (UseParallelOldGC) {
+    bool maximum_compaction = clear_all_soft_refs;
+    PSParallelCompact::invoke(maximum_compaction);
+  } else {
+    PSMarkSweep::invoke(clear_all_soft_refs);
+  }
+}
+
+进入PSMarkSweep::invoke(clear_all_soft_refs);
+
+void PSMarkSweep::invoke(bool maximum_heap_compaction) {
+
+  ParallelScavengeHeap* heap = (ParallelScavengeHeap*)Universe::heap();
+  GCCause::Cause gc_cause = heap->gc_cause();
+  PSAdaptiveSizePolicy* policy = heap->size_policy();
+  IsGCActiveMark mark;
+
+  if (ScavengeBeforeFullGC) {
+    PSScavenge::invoke_no_policy();
+  }
+
+  const bool clear_all_soft_refs = heap->collector_policy()->should_clear_all_soft_refs();
+
+  uint count = maximum_heap_compaction ? 1 : MarkSweepAlwaysCompactCount;
+  UIntFlagSetting flag_setting(MarkSweepAlwaysCompactCount, count);
+  PSMarkSweep::invoke_no_policy(clear_all_soft_refs || maximum_heap_compaction);
+}
+
+因为ScavengeBeforeFullGC默认开启所以进行年轻带gc：PSScavenge::invoke_no_policy()，
+PSScavenge::invoke_no_policy()代码太多了，不全附上了，只给出对referrance特殊处理的那部分：
+PSScavenge::invoke_no_policy()
+{
+jvm在初始化阶段会建七八个thread专门用于处理gc操作
+	PSPromotionManager* promotion_manager = PSPromotionManager::vm_thread_promotion_manager();
+    {
+      GCTraceTime tm("Scavenge", false, false, &_gc_timer, _gc_tracer.gc_id());
+      ParallelScavengeHeap::ParStrongRootsScope psrs;
+		
+建立一个gctask队列
+      GCTaskQueue* q = GCTaskQueue::create();
+
+      if (!old_gen->object_space()->is_empty()) {
+        // There are only old-to-young pointers if there are objects
+        // in the old gen.
+        uint stripe_total = active_workers;
+        for(uint i=0; i < stripe_total; i++) {
+以年老带为gcroot遍历
+          q->enqueue(new OldToYoungRootsTask(old_gen, old_top, i, stripe_total));
+        }
+      }
+以全局变量
+      q->enqueue(new ScavengeRootsTask(ScavengeRootsTask::universe));
+以jni句柄
+      q->enqueue(new ScavengeRootsTask(ScavengeRootsTask::jni_handles));
+      // We scan the thread roots in parallel
+以当前所有运行的java线程的栈上临时变量作为gcroot，遍历所有线程的所有栈上变量。
+      Threads::create_thread_roots_tasks(q);
+所有锁对象
+      q->enqueue(new ScavengeRootsTask(ScavengeRootsTask::object_synchronizer));
+等等等，关于gcroot的选取，网上查
+      q->enqueue(new ScavengeRootsTask(ScavengeRootsTask::flat_profiler));
+      q->enqueue(new ScavengeRootsTask(ScavengeRootsTask::management));
+      q->enqueue(new ScavengeRootsTask(ScavengeRootsTask::system_dictionary));
+      q->enqueue(new ScavengeRootsTask(ScavengeRootsTask::class_loader_data));
+      q->enqueue(new ScavengeRootsTask(ScavengeRootsTask::jvmti));
+      q->enqueue(new ScavengeRootsTask(ScavengeRootsTask::code_cache));
+
+      ParallelTaskTerminator terminator( active_workers, (TaskQueueSetSuper*) promotion_manager->stack_array_depth());
+      if (active_workers > 1) {
+        for (uint j = 0; j < active_workers; j++) {
+          q->enqueue(new StealTask(&terminator));
+        }
+      }
+所有task加入到那七八个线程里面开始跑，并等待标记结束。这就是并发标记的过程。
+      gc_task_manager()->execute_and_wait(q);
+    }
+接下来是对上面发现的引用类型变量，也包括我们说的java.lang.ref.FinalReference进行特殊处理
+    // Process reference objects discovered during scavenge
+    {
+      GCTraceTime tm("References", false, false, &_gc_timer, _gc_tracer.gc_id());
+
+      reference_processor()->setup_policy(false); // not always_clear
+      reference_processor()->set_active_mt_degree(active_workers);
+      PSKeepAliveClosure keep_alive(promotion_manager);
+      PSEvacuateFollowersClosure evac_followers(promotion_manager);
+      ReferenceProcessorStats stats;
+      if (reference_processor()->processing_is_mt()) {
+        PSRefProcTaskExecutor task_executor;
+        stats = reference_processor()->process_discovered_references( &_is_alive_closure, &keep_alive, &evac_followers, &task_executor, &_gc_timer, _gc_tracer.gc_id());
+      } else {
+        stats = reference_processor()->process_discovered_references( &_is_alive_closure, &keep_alive, &evac_followers, NULL, &_gc_timer, _gc_tracer.gc_id());
+      }
+
+      // Enqueue reference objects discovered during scavenge.
+      if (reference_processor()->processing_is_mt()) {
+        PSRefProcTaskExecutor task_executor;
+        reference_processor()->enqueue_discovered_references(&task_executor);
+      } else {
+        reference_processor()->enqueue_discovered_references(NULL);
+      }
+    }
+}
+
+下面看一下使用了pending字段的调用栈：
+ReferenceProcessor::enqueue_discovered_reflist(DiscoveredList &, HeapWord *) : void
+	ReferenceProcessor::enqueue_discovered_reflists(HeapWord *, AbstractRefProcTaskExecutor *) : void
+		enqueue_discovered_ref_helper<T>(ReferenceProcessor *, AbstractRefProcTaskExecutor *) : bool
+			ReferenceProcessor::enqueue_discovered_references(AbstractRefProcTaskExecutor *) : bool
+				PSScavenge::invoke_no_policy() : bool
+					PSScavenge::invoke() : bool
+
+由此调用栈就知道了，reference_processor()->enqueue_discovered_references(NULL);这句代码真正的插入了pending，具体代码不贴了，他这一步enqueue_discovered_reflist就是建立pending链表的过程，
+比如referrence1, referrence1.discovered = referrence2, referrence2.discovered = referrence3, referrence3.discovered = referrence4, ..........
+之后通过cas操作把把pending赋值为referrence1，即可。然后等gc完成了自然后去notify那个java中的锁，就开始进行finalize了。
+
+void ReferenceProcessor::enqueue_discovered_reflist(DiscoveredList& refs_list, HeapWord* pending_list_addr) {
+  oop obj = NULL;
+  oop next_d = refs_list.head();
+  if (pending_list_uses_discovered_field()) {
+    while (obj != next_d) {
+      obj = next_d;
+      next_d = java_lang_ref_Reference::discovered(obj);
+      java_lang_ref_Reference::set_next_raw(obj, obj);
+      if (next_d != obj) {
+        oopDesc::bs()->write_ref_field(java_lang_ref_Reference::discovered_addr(obj), next_d);
+      } else {
+        oop old = oopDesc::atomic_exchange_oop(refs_list.head(), pending_list_addr);
+        java_lang_ref_Reference::set_discovered_raw(obj, old); // old may be NULL
+        oopDesc::bs()->write_ref_field(java_lang_ref_Reference::discovered_addr(obj), old);
+      }
+    }
+  } else {
+    while (obj != next_d) {
+      obj = next_d;
+      next_d = java_lang_ref_Reference::discovered(obj);
+      if (next_d == obj) { 
+        oop old = oopDesc::atomic_exchange_oop(refs_list.head(), pending_list_addr);
+        if (old == NULL) {
+          java_lang_ref_Reference::set_next(obj, obj);
+        } else {
+          java_lang_ref_Reference::set_next(obj, old);
+        }
+      } else {
+        java_lang_ref_Reference::set_next(obj, next_d);
+      }
+      java_lang_ref_Reference::set_discovered(obj, (oop) NULL);
+    }
+  }
+}
+
+看这个函数 那么这个DiscoveredList& refs_list,是怎么来的呢？又要回到PSScavenge::invoke_no_policy()中了，看代码
+
+
+
+
+ReferenceProcessorStats ReferenceProcessor::process_discovered_references(
+  BoolObjectClosure*           is_alive,
+  OopClosure*                  keep_alive,
+  VoidClosure*                 complete_gc,
+  AbstractRefProcTaskExecutor* task_executor,
+  GCTimer*                     gc_timer,
+  GCId                         gc_id) {
+
+  // Stop treating discovered references specially.
+  disable_discovery();
+
+  _soft_ref_timestamp_clock = java_lang_ref_SoftReference::clock();
+
+  bool trace_time = PrintGCDetails && PrintReferenceGC;
+
+  // Soft references
+  size_t soft_count = 0;
+  {
+    GCTraceTime tt("SoftReference", trace_time, false, gc_timer, gc_id);
+    soft_count = process_discovered_reflist(_discoveredSoftRefs, _current_soft_ref_policy, true, is_alive, keep_alive, complete_gc, task_executor);
+  }
+
+  update_soft_ref_master_clock();
+
+  // Weak references
+  size_t weak_count = 0;
+  {
+    GCTraceTime tt("WeakReference", trace_time, false, gc_timer, gc_id);
+    weak_count = process_discovered_reflist(_discoveredWeakRefs, NULL, true, is_alive, keep_alive, complete_gc, task_executor);
+  }
+
+  // Final references
+  size_t final_count = 0;
+  {
+    GCTraceTime tt("FinalReference", trace_time, false, gc_timer, gc_id);
+    final_count = process_discovered_reflist(_discoveredFinalRefs, NULL, false, is_alive, keep_alive, complete_gc, task_executor);
+  }
+
+  // Phantom references
+  size_t phantom_count = 0;
+  {
+    GCTraceTime tt("PhantomReference", trace_time, false, gc_timer, gc_id);
+    phantom_count =  process_discovered_reflist(_discoveredPhantomRefs, NULL, false, is_alive, keep_alive, complete_gc, task_executor);
+
+    phantom_count += process_discovered_reflist(_discoveredCleanerRefs, NULL, false, is_alive, keep_alive, complete_gc, task_executor);
+  }
+
+  {
+    GCTraceTime tt("JNI Weak Reference", trace_time, false, gc_timer, gc_id);
+    if (task_executor != NULL) {
+      task_executor->set_single_threaded_mode();
+    }
+    process_phaseJNI(is_alive, keep_alive, complete_gc);
+  }
+
+  return ReferenceProcessorStats(soft_count, weak_count, final_count, phantom_count);
+}
+
+看到了这个函数里面，分别对刚刚我提到的五个referrance类型变量做处理soft, weak, phantom, final, cleaner，我们只看FinalReference，
+那么进入final_count = process_discovered_reflist(_discoveredFinalRefs, NULL, false, is_alive, keep_alive, complete_gc, task_executor);
+
+
+size_t ReferenceProcessor::process_discovered_reflist(
+  DiscoveredList               refs_lists[],
+  ReferencePolicy*             policy,
+  bool                         clear_referent,
+  BoolObjectClosure*           is_alive,
+  OopClosure*                  keep_alive,
+  VoidClosure*                 complete_gc,
+  AbstractRefProcTaskExecutor* task_executor)
+{
+  bool mt_processing = task_executor != NULL && _processing_is_mt;
+
+  bool must_balance = _discovery_is_mt;
+
+  if ((mt_processing && ParallelRefProcBalancingEnabled) || must_balance) {
+    balance_queues(refs_lists);
+  }
+
+  size_t total_list_count = total_count(refs_lists);
+
+  // Phase 1 (soft refs only):
+  // . Traverse the list and remove any SoftReferences whose
+  //   referents are not alive, but that should be kept alive for
+  //   policy reasons. Keep alive the transitive closure of all
+  //   such referents.
+  if (policy != NULL) {
+    if (mt_processing) {
+      RefProcPhase1Task phase1(*this, refs_lists, policy, true /*marks_oops_alive*/);
+      task_executor->execute(phase1);
+    } else {
+      for (uint i = 0; i < _max_num_q; i++) {
+        process_phase1(refs_lists[i], policy, is_alive, keep_alive, complete_gc);
+      }
+    }
+  }
+
+  // Phase 2:
+  // . Traverse the list and remove any refs whose referents are alive.
+  if (mt_processing) {
+    RefProcPhase2Task phase2(*this, refs_lists, !discovery_is_atomic() /*marks_oops_alive*/);
+    task_executor->execute(phase2);
+  } else {
+    for (uint i = 0; i < _max_num_q; i++) {
+      process_phase2(refs_lists[i], is_alive, keep_alive, complete_gc);
+    }
+  }
+
+  // Phase 3:
+  // . Traverse the list and process referents as appropriate.
+  if (mt_processing) {
+    RefProcPhase3Task phase3(*this, refs_lists, clear_referent, true /*marks_oops_alive*/);
+    task_executor->execute(phase3);
+  } else {
+    for (uint i = 0; i < _max_num_q; i++) {
+      process_phase3(refs_lists[i], clear_referent, is_alive, keep_alive, complete_gc);
+    }
+  }
+
+  return total_list_count;
+}
+
+这里就是对标记阶段发现的引用变量处理，FinalReference只进行Phase 2和3，这里就是特殊处理了，往下就不看了，回头来看在标记阶段是如何发现引用类型变量的呢？
+
+首先要说一下java对象的对象头，任何一个java对象包括刚才的B bubbo = new B();即使里面没有任何字段，jvm也会给它加上两个共8字节的字段：
+
+class oopDesc {
+ private:
+  volatile markOop  _mark;
+  union _metadata {
+    Klass*      _klass;
+    narrowKlass _compressed_klass;压缩指针
+  } _metadata;
+
+一个是_mark，不细说了，他就是这个对象的标志，包括锁信息，hashcode，gc活了几代等等。
+
+另一个就是_metadata，他就是我们B bubbo = new B()的bubbo变量的Class实例，也就是_metadata是B.class或者bubbo.getClass()
+
+那么Klass类型是什么呢？看一下他的类型层：
+Klass
+	ArrayKlass
+		ObjArrayKlass   
+		TypeArrayKlass
+	InstanceKlass
+		InstanceClassLoaderKlass
+		InstanceMirrorKlass
+		InstanceRefKlass
+
+看名字我就知道new B()对应的Class对象（B.class）就是一个InstanceKlass,  那么刚刚说到的new B()的同时会建一个FinalReference对象，而FinalReference.class就是InstanceRefKlass
+
+这样的话，很容易就区分一个对象是不是引用类型对象了，只要查看这个对象的_metadata的类型就好了呗，那么回到刚才的
+		所有task加入到那七八个线程里面开始跑，并等待标记结束。
+      	gc_task_manager()->execute_and_wait(q);
+      	
+这里进入一层层的调用会进入到这里,调用栈：
+
+specialized_oop_push_contents<T>(InstanceRefKlass *, PSPromotionManager *, oop) : void
+	InstanceRefKlass::oop_push_contents(PSPromotionManager *, oop) : void (2 matches)
+		oopDesc::push_contents(PSPromotionManager *) : void
+			PSPromotionManager::copy_to_survivor_space(oop) : oop
+				PSScavengeFromKlassClosure::do_oop(oop *) : void
+				
+PSScavengeFromKlassClosure会被另一个closure，PSScavengeKlassClosure引用调用	，那么它的调用栈：	
+
+PSScavengeKlassClosure::do_klass(Klass *) : void
+	ClassLoaderData::classes_do(KlassClosure *) : void
+		ClassLoaderData::oops_do(OopClosure *, KlassClosure *, bool) : void
+			ClassLoaderDataGraph::oops_do(OopClosure *, KlassClosure *, bool) : void
+				ScavengeRootsTask::do_it(GCTaskManager *, uint) : void
+				
+这就是我们刚才在PSScavenge::invoke_no_policy()看到的一个task：ScavengeRootsTask，那它对应的是这条代码：
+
+q->enqueue(new ScavengeRootsTask(ScavengeRootsTask::class_loader_data));
+
+这条代码会从所有Class对象开始，遍历Class类型的所有对象，也包括我们的B.class和FinalReference.class,那么就会把所有B类型的对象和FinalReference类型的对象都找到,当然也会找到刚才创建的那两个对象，
+那么继续看一下specialized_oop_push_contents<T>(InstanceRefKlass *, PSPromotionManager *, oop)是如何发现引用类型变量的:
+
+
+
+而我们的InstanceRefKlass是InstanceKlass的一个子类，那么会调用InstanceRefKlass::oop_push_contents
+		
+代码为：
+void InstanceRefKlass::oop_push_contents(InstanceRefKlass *ref, PSPromotionManager* pm, oop obj) {
+  T* referent_addr = (T*)java_lang_ref_Reference::referent_addr(obj);
+	这里判断这个引用类型是不是需要
+  if (PSScavenge::should_scavenge(referent_addr)) {
+    ReferenceProcessor* rp = PSScavenge::reference_processor();
+    if (rp->discover_reference(obj, ref->reference_type())) {
+      ref->InstanceKlass::oop_push_contents(pm, obj);
+      return;
+    } else {
+      pm->claim_or_forward_depth(referent_addr);
+    }
+  }
+  T* next_addr = (T*)java_lang_ref_Reference::next_addr(obj);
+  if (ReferenceProcessor::pending_list_uses_discovered_field()) {
+    T  next_oop = oopDesc::load_heap_oop(next_addr);
+    if (!oopDesc::is_null(next_oop)) { // i.e. ref is not "active"
+      T* discovered_addr = (T*)java_lang_ref_Reference::discovered_addr(obj);
+      if (PSScavenge::should_scavenge(discovered_addr)) {
+        pm->claim_or_forward_depth(discovered_addr);
+      }
+    }
+  }
+  if (PSScavenge::should_scavenge(next_addr)) {
+    pm->claim_or_forward_depth(next_addr);
+  }
+  ref->InstanceKlass::oop_push_contents(pm, obj);
+}
+
