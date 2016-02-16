@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -38,6 +38,8 @@
 #include "runtime/arguments.hpp"
 #include "runtime/handles.inline.hpp"
 #include "utilities/copy.hpp"
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 inline InstanceKlass* klassVtable::ik() const {
   Klass* k = _klass();
@@ -249,6 +251,17 @@ void klassVtable::initialize_vtable(bool checkconstraints, TRAPS) {
 // For bytecodes not produced by javac together it is possible that a method does not override
 // the superclass's method, but might indirectly override a super-super class's vtable entry
 // If none found, return a null superk, else return the superk of the method this does override
+// For public and protected methods: if they override a superclass, they will
+// also be overridden themselves appropriately.
+// Private methods do not override and are not overridden.
+// Package Private methods are trickier:
+// e.g. P1.A, pub m
+// P2.B extends A, package private m
+// P1.C extends B, public m
+// P1.C.m needs to override P1.A.m and can not override P2.B.m
+// Therefore: all package private methods need their own vtable entries for
+// them to be the root of an inheritance overriding decision
+// Package private methods may also override other vtable entries
 InstanceKlass* klassVtable::find_transitive_override(InstanceKlass* initialsuper, methodHandle target_method,
                             int vtable_index, Handle target_loader, Symbol* target_classname, Thread * THREAD) {
   InstanceKlass* superk = initialsuper;
@@ -396,8 +409,11 @@ bool klassVtable::update_inherited_vtable(InstanceKlass* klass, methodHandle tar
                              target_classname, THREAD))
                              != (InstanceKlass*)NULL))))
         {
-        // overriding, so no new entry
-        allocate_new = false;
+        // Package private methods always need a new entry to root their own
+        // overriding. They may also override other methods.
+        if (!target_method()->is_package_private()) {
+          allocate_new = false;
+        }
 
         if (checkconstraints) {
         // Override vtable entry if passes loader constraint check
@@ -541,8 +557,9 @@ bool klassVtable::needs_new_vtable_entry(methodHandle target_method,
                                          AccessFlags class_flags,
                                          TRAPS) {
   if (class_flags.is_interface()) {
-    // Interfaces do not use vtables, so there is no point to assigning
-    // a vtable index to any of their methods.  If we refrain from doing this,
+    // Interfaces do not use vtables, except for java.lang.Object methods,
+    // so there is no point to assigning
+    // a vtable index to any of their local methods.  If we refrain from doing this,
     // we can use Method::_vtable_index to hold the itable index
     return false;
   }
@@ -577,6 +594,12 @@ bool klassVtable::needs_new_vtable_entry(methodHandle target_method,
   // private methods not overriding
   // JDK8 adds private  methods in interfaces which require invokespecial
   if (target_method()->is_private()) {
+    return true;
+  }
+
+  // Package private methods always need a new entry to root their own
+  // overriding. This allows transitive overriding to work.
+  if (target_method()->is_package_private()) {
     return true;
   }
 
@@ -622,7 +645,7 @@ bool klassVtable::needs_new_vtable_entry(methodHandle target_method,
   // this check for all access permissions.
   InstanceKlass *sk = InstanceKlass::cast(super);
   if (sk->has_miranda_methods()) {
-    if (sk->lookup_method_in_all_interfaces(name, signature, false) != NULL) {
+    if (sk->lookup_method_in_all_interfaces(name, signature, Klass::normal) != NULL) {
       return false;  // found a matching miranda; we do not need a new entry
     }
   }
@@ -698,7 +721,7 @@ bool klassVtable::is_miranda(Method* m, Array<Method*>* class_methods,
              && mo->method_holder() != NULL
              && mo->method_holder()->super() != NULL)
       {
-         mo = mo->method_holder()->super()->uncached_lookup_method(name, signature);
+         mo = mo->method_holder()->super()->uncached_lookup_method(name, signature, Klass::normal);
       }
       if (mo == NULL || mo->access_flags().is_private() ) {
         // super class hierarchy does not implement it or protection is different
@@ -743,7 +766,7 @@ void klassVtable::add_new_mirandas_to_lists(
       if (is_miranda(im, class_methods, default_methods, super)) { // is it a miranda at all?
         InstanceKlass *sk = InstanceKlass::cast(super);
         // check if it is a duplicate of a super's miranda
-        if (sk->lookup_method_in_all_interfaces(im->name(), im->signature(), false) == NULL) {
+        if (sk->lookup_method_in_all_interfaces(im->name(), im->signature(), Klass::normal) == NULL) {
           new_mirandas->append(im);
         }
         if (all_mirandas != NULL) {
@@ -1271,7 +1294,7 @@ void visit_all_interfaces(Array<Klass*>* transitive_intf, InterfaceVisiterClosur
 
 class CountInterfacesClosure : public InterfaceVisiterClosure {
  private:
-  int _nof_methods; //nof是number_of的缩写
+  int _nof_methods;
   int _nof_interfaces;
  public:
    CountInterfacesClosure() { _nof_methods = 0; _nof_interfaces = 0; }

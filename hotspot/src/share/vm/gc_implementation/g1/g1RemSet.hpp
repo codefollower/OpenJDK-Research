@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -96,8 +96,8 @@ public:
   // the "i" passed to the calling thread's work(i) function.
   // In the sequential case this param will be ignored.
   void oops_into_collection_set_do(OopsInHeapRegionClosure* blk,
-                                   CodeBlobToOopClosure* code_root_cl,
-                                   int worker_i);
+                                   CodeBlobClosure* code_root_cl,
+                                   uint worker_i);
 
   // Prepare for and cleanup after an oops_into_collection_set_do
   // call.  Must call each of these once before and after (in sequential
@@ -108,10 +108,10 @@ public:
   void cleanup_after_oops_into_collection_set_do();
 
   void scanRS(OopsInHeapRegionClosure* oc,
-              CodeBlobToOopClosure* code_root_cl,
-              int worker_i);
+              CodeBlobClosure* code_root_cl,
+              uint worker_i);
 
-  void updateRS(DirtyCardQueue* into_cset_dcq, int worker_i);
+  void updateRS(DirtyCardQueue* into_cset_dcq, uint worker_i);
 
   CardTableModRefBS* ct_bs() { return _ct_bs; }
   size_t cardsScanned() { return _total_cards_scanned; }
@@ -138,7 +138,7 @@ public:
   // if the given card contains oops that have references into the
   // current collection set.
   virtual bool refine_card(jbyte* card_ptr,
-                           int worker_i,
+                           uint worker_i,
                            bool check_for_refs_into_cset);
 
   // Print accumulated summary info from the start of the VM.
@@ -171,12 +171,12 @@ public:
 class UpdateRSOopClosure: public ExtendedOopClosure {
   HeapRegion* _from;
   G1RemSet* _rs;
-  int _worker_i;
+  uint _worker_i;
 
   template <class T> void do_oop_work(T* p);
 
 public:
-  UpdateRSOopClosure(G1RemSet* rs, int worker_i = 0) :
+  UpdateRSOopClosure(G1RemSet* rs, uint worker_i = 0) :
     _from(NULL), _rs(rs), _worker_i(worker_i)
   {}
 
@@ -192,19 +192,5 @@ public:
   //  bool idempotent() { return true; }
   bool apply_to_weak_ref_discovered_field() { return true; }
 };
-
-class UpdateRSetImmediate: public OopsInHeapRegionClosure {
-private:
-  G1RemSet* _g1_rem_set;
-
-  template <class T> void do_oop_work(T* p);
-public:
-  UpdateRSetImmediate(G1RemSet* rs) :
-    _g1_rem_set(rs) {}
-
-  virtual void do_oop(narrowOop* p) { do_oop_work(p); }
-  virtual void do_oop(      oop* p) { do_oop_work(p); }
-};
-
 
 #endif // SHARE_VM_GC_IMPLEMENTATION_G1_G1REMSET_HPP

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -61,6 +61,8 @@
 #ifdef TARGET_ARCH_ppc
 # include "nativeInst_ppc.hpp"
 #endif
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 RegisterMap::RegisterMap(JavaThread *thread, bool update_map) {
   _thread         = thread;
@@ -531,13 +533,16 @@ jint frame::interpreter_frame_expression_stack_size() const {
   // Number of elements on the interpreter expression stack
   // Callers should span by stackElementWords
   int element_size = Interpreter::stackElementWords;
+  size_t stack_size = 0;
   if (frame::interpreter_frame_expression_stack_direction() < 0) {
-    return (interpreter_frame_expression_stack() -
-            interpreter_frame_tos_address() + 1)/element_size;
+    stack_size = (interpreter_frame_expression_stack() -
+                  interpreter_frame_tos_address() + 1)/element_size;
   } else {
-    return (interpreter_frame_tos_address() -
-            interpreter_frame_expression_stack() + 1)/element_size;
+    stack_size = (interpreter_frame_tos_address() -
+                  interpreter_frame_expression_stack() + 1)/element_size;
   }
+  assert( stack_size <= (size_t)max_jint, "stack size too big");
+  return ((jint)stack_size);
 }
 
 
@@ -895,7 +900,7 @@ oop* frame::interpreter_callee_receiver_addr(Symbol* signature) {
 }
 
 
-void frame::oops_interpreted_do(OopClosure* f, CLDToOopClosure* cld_f,
+void frame::oops_interpreted_do(OopClosure* f, CLDClosure* cld_f,
     const RegisterMap* map, bool query_oop_map_cache) {
   assert(is_interpreted_frame(), "Not an interpreted frame");
   assert(map != NULL, "map must be set");
@@ -933,20 +938,9 @@ void frame::oops_interpreted_do(OopClosure* f, CLDToOopClosure* cld_f,
     cld_f->do_cld(m->method_holder()->class_loader_data());
   }
 
-#if !defined(PPC) || defined(ZERO)
-  if (m->is_native()) {
-#ifdef CC_INTERP
-    interpreterState istate = get_interpreterState();
-    f->do_oop((oop*)&istate->_oop_temp);
-#else
-    f->do_oop((oop*)( fp() + interpreter_frame_oop_temp_offset ));
-#endif /* CC_INTERP */
+  if (m->is_native() PPC32_ONLY(&& m->is_static())) {
+    f->do_oop(interpreter_frame_temp_oop_addr());
   }
-#else // PPC
-  if (m->is_native() && m->is_static()) {
-    f->do_oop(interpreter_frame_mirror_addr());
-  }
-#endif // PPC
 
   int max_locals = m->is_native() ? m->size_of_parameters() : m->max_locals();
 
@@ -1146,7 +1140,7 @@ void frame::oops_entry_do(OopClosure* f, const RegisterMap* map) {
 }
 
 
-void frame::oops_do_internal(OopClosure* f, CLDToOopClosure* cld_f, CodeBlobClosure* cf, RegisterMap* map, bool use_interpreter_oop_map_cache) {
+void frame::oops_do_internal(OopClosure* f, CLDClosure* cld_f, CodeBlobClosure* cf, RegisterMap* map, bool use_interpreter_oop_map_cache) {
 #ifndef PRODUCT
   // simulate GC crash here to dump java thread in error report
   if (CrashGCForDumpingJavaThread) {

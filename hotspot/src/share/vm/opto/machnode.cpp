@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -133,6 +133,10 @@ void MachNode::emit(CodeBuffer &cbuf, PhaseRegAlloc *ra_) const {
   #endif
   ShouldNotCallThis();
 }
+
+//---------------------------postalloc_expand----------------------------------
+// Expand node after register allocation.
+void MachNode::postalloc_expand(GrowableArray <Node *> *nodes, PhaseRegAlloc *ra_) {}
 
 //------------------------------size-------------------------------------------
 // Size of instruction in bytes
@@ -393,6 +397,17 @@ int MachNode::operand_index( uint operand ) const {
   return skipped;
 }
 
+int MachNode::operand_index(const MachOper *oper) const {
+  uint skipped = oper_input_base(); // Sum of leaves skipped so far
+  uint opcnt;
+  for (opcnt = 1; opcnt < num_opnds(); opcnt++) {
+    if (_opnds[opcnt] == oper) break;
+    uint num_edges = _opnds[opcnt]->num_edges(); // leaves for operand
+    skipped += num_edges;
+  }
+  if (_opnds[opcnt] != oper) return -1;
+  return skipped;
+}
 
 //------------------------------peephole---------------------------------------
 // Apply peephole rule(s) to this instruction
@@ -501,6 +516,9 @@ int MachConstantNode::constant_offset() {
   return _constant.offset();
 }
 
+int MachConstantNode::constant_offset_unchecked() const {
+  return _constant.offset();
+}
 
 //=============================================================================
 #ifndef PRODUCT
@@ -621,7 +639,6 @@ void MachCallNode::dump_spec(outputStream *st) const {
 }
 #endif
 
-
 bool MachCallNode::return_value_is_used() const {
   if (tf()->range()->cnt() == TypeFunc::Parms) {
     // void return
@@ -639,12 +656,25 @@ bool MachCallNode::return_value_is_used() const {
   return false;
 }
 
+// Similar to cousin class CallNode::returns_pointer
+// Because this is used in deoptimization, we want the type info, not the data
+// flow info; the interpreter will "use" things that are dead to the optimizer.
+bool MachCallNode::returns_pointer() const {
+  const TypeTuple *r = tf()->range();
+  return (r->cnt() > TypeFunc::Parms &&
+          r->field_at(TypeFunc::Parms)->isa_ptr());
+}
 
 //------------------------------Registers--------------------------------------
-const RegMask &MachCallNode::in_RegMask( uint idx ) const {
+const RegMask &MachCallNode::in_RegMask(uint idx) const {
   // Values in the domain use the users calling convention, embodied in the
   // _in_rms array of RegMasks.
-  if (idx < tf()->domain()->cnt())  return _in_rms[idx];
+  if (idx < tf()->domain()->cnt()) {
+    return _in_rms[idx];
+  }
+  if (idx == mach_constant_base_node_input()) {
+    return MachConstantBaseNode::static_out_RegMask();
+  }
   // Values outside the domain represent debug info
   return *Compile::current()->matcher()->idealreg2debugmask[in(idx)->ideal_reg()];
 }
@@ -671,7 +701,12 @@ void MachCallJavaNode::dump_spec(outputStream *st) const {
 const RegMask &MachCallJavaNode::in_RegMask(uint idx) const {
   // Values in the domain use the users calling convention, embodied in the
   // _in_rms array of RegMasks.
-  if (idx < tf()->domain()->cnt())  return _in_rms[idx];
+  if (idx < tf()->domain()->cnt()) {
+    return _in_rms[idx];
+  }
+  if (idx == mach_constant_base_node_input()) {
+    return MachConstantBaseNode::static_out_RegMask();
+  }
   // Values outside the domain represent debug info
   Matcher* m = Compile::current()->matcher();
   // If this call is a MethodHandle invoke we have to use a different

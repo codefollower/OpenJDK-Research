@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,6 +29,7 @@
 #include "gc_implementation/shared/markSweep.inline.hpp"
 #include "gc_interface/collectedHeap.inline.hpp"
 #include "memory/genOopClosures.inline.hpp"
+#include "memory/iterator.inline.hpp"
 #include "memory/metadataFactory.hpp"
 #include "memory/resourceArea.hpp"
 #include "memory/universe.inline.hpp"
@@ -42,6 +43,7 @@
 #include "oops/symbol.hpp"
 #include "runtime/handles.inline.hpp"
 #include "runtime/mutexLocker.hpp"
+#include "runtime/orderAccess.inline.hpp"
 #include "utilities/copy.hpp"
 #include "utilities/macros.hpp"
 #if INCLUDE_ALL_GCS
@@ -49,7 +51,7 @@
 #include "gc_implementation/g1/g1CollectedHeap.inline.hpp"
 #include "gc_implementation/g1/g1OopClosures.inline.hpp"
 #include "gc_implementation/g1/g1RemSet.inline.hpp"
-#include "gc_implementation/g1/heapRegionSeq.inline.hpp"
+#include "gc_implementation/g1/heapRegionManager.inline.hpp"
 #include "gc_implementation/parNew/parOopClosures.inline.hpp"
 #include "gc_implementation/parallelScavenge/psCompactionManager.hpp"
 #include "gc_implementation/parallelScavenge/psPromotionManager.inline.hpp"
@@ -269,7 +271,7 @@ template <class T> void ObjArrayKlass::do_copy(arrayOop s, T* src,
         if (element_is_null ||
             (new_val->klass())->is_subtype_of(bound)) {
           bs->write_ref_field_pre(p, new_val);
-          *p = *from;
+          *p = element;
         } else {
           // We must do a barrier to cover the partial copy.
           const size_t pd = pointer_delta(p, dst, (size_t)heapOopSize);
@@ -475,12 +477,6 @@ void ObjArrayKlass::oop_follow_contents(ParCompactionManager* cm,
 }
 #endif // INCLUDE_ALL_GCS
 
-#define if_do_metadata_checked(closure, nv_suffix)                    \
-  /* Make sure the non-virtual and the virtual versions match. */     \
-  assert(closure->do_metadata##nv_suffix() == closure->do_metadata(), \
-      "Inconsistency in do_metadata");                                \
-  if (closure->do_metadata##nv_suffix())
-
 #define ObjArrayKlass_OOP_OOP_ITERATE_DEFN(OopClosureType, nv_suffix)           \
                                                                                 \
 int ObjArrayKlass::oop_oop_iterate##nv_suffix(oop obj,                          \
@@ -674,8 +670,8 @@ const char* ObjArrayKlass::internal_name() const {
 
 // Verification
 
-void ObjArrayKlass::verify_on(outputStream* st, bool check_dictionary) {
-  ArrayKlass::verify_on(st, check_dictionary);
+void ObjArrayKlass::verify_on(outputStream* st) {
+  ArrayKlass::verify_on(st);
   guarantee(element_klass()->is_klass(), "should be klass");
   guarantee(bottom_klass()->is_klass(), "should be klass");
   Klass* bk = bottom_klass();

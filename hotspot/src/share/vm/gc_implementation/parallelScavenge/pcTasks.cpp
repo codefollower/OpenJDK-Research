@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -41,6 +41,8 @@
 #include "runtime/vmThread.hpp"
 #include "services/management.hpp"
 
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
+
 //
 // ThreadRootsMarkingTask
 //
@@ -51,13 +53,13 @@ void ThreadRootsMarkingTask::do_it(GCTaskManager* manager, uint which) {
   ResourceMark rm;
 
   NOT_PRODUCT(GCTraceTime tm("ThreadRootsMarkingTask",
-    PrintGCDetails && TraceParallelOldGCTasks, true, NULL));
+    PrintGCDetails && TraceParallelOldGCTasks, true, NULL, PSParallelCompact::gc_tracer()->gc_id()));
   ParCompactionManager* cm =
     ParCompactionManager::gc_thread_compaction_manager(which);
 
   PSParallelCompact::MarkAndPushClosure mark_and_push_closure(cm);
   CLDToOopClosure mark_and_push_from_clds(&mark_and_push_closure, true);
-  CodeBlobToOopClosure mark_and_push_in_blobs(&mark_and_push_closure, /*do_marking=*/ true);
+  MarkingCodeBlobClosure mark_and_push_in_blobs(&mark_and_push_closure, !CodeBlobToOopClosure::FixRelocations);
 
   if (_java_thread != NULL)
     _java_thread->oops_do(
@@ -80,7 +82,7 @@ void MarkFromRootsTask::do_it(GCTaskManager* manager, uint which) {
   assert(Universe::heap()->is_gc_active(), "called outside gc");
 
   NOT_PRODUCT(GCTraceTime tm("MarkFromRootsTask",
-    PrintGCDetails && TraceParallelOldGCTasks, true, NULL));
+    PrintGCDetails && TraceParallelOldGCTasks, true, NULL, PSParallelCompact::gc_tracer()->gc_id()));
   ParCompactionManager* cm =
     ParCompactionManager::gc_thread_compaction_manager(which);
   PSParallelCompact::MarkAndPushClosure mark_and_push_closure(cm);
@@ -98,7 +100,7 @@ void MarkFromRootsTask::do_it(GCTaskManager* manager, uint which) {
     case threads:
     {
       ResourceMark rm;
-      CodeBlobToOopClosure each_active_code_blob(&mark_and_push_closure, /*do_marking=*/ true);
+      MarkingCodeBlobClosure each_active_code_blob(&mark_and_push_closure, !CodeBlobToOopClosure::FixRelocations);
       CLDToOopClosure mark_and_push_from_cld(&mark_and_push_closure);
       Threads::oops_do(&mark_and_push_closure, &mark_and_push_from_cld, &each_active_code_blob);
     }
@@ -151,7 +153,7 @@ void RefProcTaskProxy::do_it(GCTaskManager* manager, uint which)
   assert(Universe::heap()->is_gc_active(), "called outside gc");
 
   NOT_PRODUCT(GCTraceTime tm("RefProcTask",
-    PrintGCDetails && TraceParallelOldGCTasks, true, NULL));
+    PrintGCDetails && TraceParallelOldGCTasks, true, NULL, PSParallelCompact::gc_tracer()->gc_id()));
   ParCompactionManager* cm =
     ParCompactionManager::gc_thread_compaction_manager(which);
   PSParallelCompact::MarkAndPushClosure mark_and_push_closure(cm);
@@ -207,7 +209,7 @@ void StealMarkingTask::do_it(GCTaskManager* manager, uint which) {
   assert(Universe::heap()->is_gc_active(), "called outside gc");
 
   NOT_PRODUCT(GCTraceTime tm("StealMarkingTask",
-    PrintGCDetails && TraceParallelOldGCTasks, true, NULL));
+    PrintGCDetails && TraceParallelOldGCTasks, true, NULL, PSParallelCompact::gc_tracer()->gc_id()));
 
   ParCompactionManager* cm =
     ParCompactionManager::gc_thread_compaction_manager(which);
@@ -240,7 +242,7 @@ void StealRegionCompactionTask::do_it(GCTaskManager* manager, uint which) {
   assert(Universe::heap()->is_gc_active(), "called outside gc");
 
   NOT_PRODUCT(GCTraceTime tm("StealRegionCompactionTask",
-    PrintGCDetails && TraceParallelOldGCTasks, true, NULL));
+    PrintGCDetails && TraceParallelOldGCTasks, true, NULL, PSParallelCompact::gc_tracer()->gc_id()));
 
   ParCompactionManager* cm =
     ParCompactionManager::gc_thread_compaction_manager(which);
@@ -307,7 +309,7 @@ UpdateDensePrefixTask::UpdateDensePrefixTask(
 void UpdateDensePrefixTask::do_it(GCTaskManager* manager, uint which) {
 
   NOT_PRODUCT(GCTraceTime tm("UpdateDensePrefixTask",
-    PrintGCDetails && TraceParallelOldGCTasks, true, NULL));
+    PrintGCDetails && TraceParallelOldGCTasks, true, NULL, PSParallelCompact::gc_tracer()->gc_id()));
 
   ParCompactionManager* cm =
     ParCompactionManager::gc_thread_compaction_manager(which);
@@ -322,7 +324,7 @@ void DrainStacksCompactionTask::do_it(GCTaskManager* manager, uint which) {
   assert(Universe::heap()->is_gc_active(), "called outside gc");
 
   NOT_PRODUCT(GCTraceTime tm("DrainStacksCompactionTask",
-    PrintGCDetails && TraceParallelOldGCTasks, true, NULL));
+    PrintGCDetails && TraceParallelOldGCTasks, true, NULL, PSParallelCompact::gc_tracer()->gc_id()));
 
   ParCompactionManager* cm =
     ParCompactionManager::gc_thread_compaction_manager(which);

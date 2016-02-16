@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -33,7 +33,9 @@ class SATBMarkQueueSet;
 
 // A ptrQueue whose elements are "oops", pointers to object heads.
 class ObjPtrQueue: public PtrQueue {
+  friend class Threads;
   friend class SATBMarkQueueSet;
+  friend class G1RemarkThreadsClosure;
 
 private:
   // Filter out unwanted entries from the buffer.
@@ -58,9 +60,8 @@ public:
     // field to true. This is done in JavaThread::initialize_queues().
     PtrQueue(qset, perm, false /* active */) { }
 
-  // Overrides PtrQueue::flush() so that it can filter the buffer
-  // before it is flushed.
-  virtual void flush();
+  // Process queue entries and free resources.
+  void flush();
 
   // Overrides PtrQueue::should_enqueue_buffer(). See the method's
   // definition for more information.
@@ -84,10 +85,11 @@ class SATBMarkQueueSet: public PtrQueueSet {
   // Utility function to support sequential and parallel versions.  If
   // "par" is true, then "worker" is the par thread id; if "false", worker
   // is ignored.
-  bool apply_closure_to_completed_buffer_work(bool par, int worker);
+  bool apply_closure_to_completed_buffer_work(bool par, uint worker);
 
 #ifdef ASSERT
-  void dump_active_values(JavaThread* first, bool expected_active);
+  void dump_active_states(bool expected_active);
+  void verify_active_states(bool expected_active);
 #endif // ASSERT
 
 public:
@@ -99,11 +101,11 @@ public:
 
   static void handle_zero_index_for_thread(JavaThread* t);
 
-  // Apply "set_active(b)" to all Java threads' SATB queues. It should be
+  // Apply "set_active(active)" to all SATB queues in the set. It should be
   // called only with the world stopped. The method will assert that the
   // SATB queues of all threads it visits, as well as the SATB queue
   // set itself, has an active value same as expected_active.
-  void set_active_all_threads(bool b, bool expected_active);
+  void set_active_all_threads(bool active, bool expected_active);
 
   // Filter all the currently-active SATB buffers.
   void filter_thread_buffers();
@@ -118,13 +120,6 @@ public:
   // closures, one for each parallel GC thread.
   void set_par_closure(int i, ObjectClosure* closure);
 
-  // Apply the registered closure to all entries on each
-  // currently-active buffer and then empty the buffer. It should only
-  // be called serially and at a safepoint.
-  void iterate_closure_all_threads();
-  // Parallel version of the above.
-  void par_iterate_closure_all_threads(int worker);
-
   // If there exists some completed buffer, pop it, then apply the
   // registered closure to all its elements, and return true.  If no
   // completed buffers exist, return false.
@@ -132,7 +127,7 @@ public:
     return apply_closure_to_completed_buffer_work(false, 0);
   }
   // Parallel version of the above.
-  bool par_apply_closure_to_completed_buffer(int worker) {
+  bool par_apply_closure_to_completed_buffer(uint worker) {
     return apply_closure_to_completed_buffer_work(true, worker);
   }
 

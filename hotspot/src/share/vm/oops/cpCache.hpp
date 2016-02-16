@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,6 +27,7 @@
 
 #include "interpreter/bytecodes.hpp"
 #include "memory/allocation.hpp"
+#include "runtime/orderAccess.hpp"
 #include "utilities/array.hpp"
 
 class PSPromotionManager;
@@ -138,7 +139,7 @@ class ConstantPoolCacheEntry VALUE_OBJ_CLASS_SPEC {
 
   void set_bytecode_1(Bytecodes::Code code);
   void set_bytecode_2(Bytecodes::Code code);
-  void set_f1(Metadata* f1)                            {
+  void set_f1(Metadata* f1) {
     Metadata* existing_f1 = (Metadata*)_f1; // read once
     assert(existing_f1 == NULL || existing_f1 == f1, "illegal field change");
     _f1 = f1;
@@ -325,22 +326,29 @@ class ConstantPoolCacheEntry VALUE_OBJ_CLASS_SPEC {
 
   // Accessors
   int indices() const                            { return _indices; }
+  int indices_ord() const                        { return (intx)OrderAccess::load_ptr_acquire(&_indices); }
   int constant_pool_index() const                { return (indices() & cp_index_mask); }
-  Bytecodes::Code bytecode_1() const             { return Bytecodes::cast((indices() >> bytecode_1_shift) & bytecode_1_mask); }
-  Bytecodes::Code bytecode_2() const             { return Bytecodes::cast((indices() >> bytecode_2_shift) & bytecode_2_mask); }
-  Method* f1_as_method() const                   { Metadata* f1 = (Metadata*)_f1; assert(f1 == NULL || f1->is_method(), ""); return (Method*)f1; }
-  Klass*    f1_as_klass() const                  { Metadata* f1 = (Metadata*)_f1; assert(f1 == NULL || f1->is_klass(), ""); return (Klass*)f1; }
-  bool      is_f1_null() const                   { Metadata* f1 = (Metadata*)_f1; return f1 == NULL; }  // classifies a CPC entry as unbound
+  Bytecodes::Code bytecode_1() const             { return Bytecodes::cast((indices_ord() >> bytecode_1_shift) & bytecode_1_mask); }
+  Bytecodes::Code bytecode_2() const             { return Bytecodes::cast((indices_ord() >> bytecode_2_shift) & bytecode_2_mask); }
+  Metadata* f1_ord() const                       { return (Metadata *)OrderAccess::load_ptr_acquire(&_f1); }
+  Method*   f1_as_method() const                 { Metadata* f1 = f1_ord(); assert(f1 == NULL || f1->is_method(), ""); return (Method*)f1; }
+  Klass*    f1_as_klass() const                  { Metadata* f1 = f1_ord(); assert(f1 == NULL || f1->is_klass(), ""); return (Klass*)f1; }
+  // Use the accessor f1() to acquire _f1's value. This is needed for
+  // example in BytecodeInterpreter::run(), where is_f1_null() is
+  // called to check if an invokedynamic call is resolved. This load
+  // of _f1 must be ordered with the loads performed by
+  // cache->main_entry_index().
+  bool      is_f1_null() const                   { Metadata* f1 = f1_ord(); return f1 == NULL; }  // classifies a CPC entry as unbound
   int       f2_as_index() const                  { assert(!is_vfinal(), ""); return (int) _f2; }
-  Method* f2_as_vfinal_method() const            { assert(is_vfinal(), ""); return (Method*)_f2; }
+  Method*   f2_as_vfinal_method() const          { assert(is_vfinal(), ""); return (Method*)_f2; }
   int  field_index() const                       { assert(is_field_entry(),  ""); return (_flags & field_index_mask); }
   int  parameter_size() const                    { assert(is_method_entry(), ""); return (_flags & parameter_size_mask); }
   bool is_volatile() const                       { return (_flags & (1 << is_volatile_shift))       != 0; }
   bool is_final() const                          { return (_flags & (1 << is_final_shift))          != 0; }
   bool is_forced_virtual() const                 { return (_flags & (1 << is_forced_virtual_shift)) != 0; }
   bool is_vfinal() const                         { return (_flags & (1 << is_vfinal_shift))         != 0; }
-  bool has_appendix() const                      { return (_flags & (1 << has_appendix_shift))      != 0; }
-  bool has_method_type() const                   { return (_flags & (1 << has_method_type_shift))   != 0; }
+  bool has_appendix() const                      { return (!is_f1_null()) && (_flags & (1 << has_appendix_shift))      != 0; }
+  bool has_method_type() const                   { return (!is_f1_null()) && (_flags & (1 << has_method_type_shift))   != 0; }
   bool is_method_entry() const                   { return (_flags & (1 << is_field_entry_shift))    == 0; }
   bool is_field_entry() const                    { return (_flags & (1 << is_field_entry_shift))    != 0; }
   bool is_byte() const                           { return flag_state() == btos; }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -38,6 +38,35 @@
 #ifdef TARGET_COMPILER_sparcWorks
 # include "utilities/globalDefinitions_sparcWorks.hpp"
 #endif
+#ifdef TARGET_COMPILER_xlc
+# include "utilities/globalDefinitions_xlc.hpp"
+#endif
+
+#ifndef PRAGMA_DIAG_PUSH
+#define PRAGMA_DIAG_PUSH
+#endif
+#ifndef PRAGMA_DIAG_POP
+#define PRAGMA_DIAG_POP
+#endif
+#ifndef PRAGMA_FORMAT_NONLITERAL_IGNORED
+#define PRAGMA_FORMAT_NONLITERAL_IGNORED
+#endif
+#ifndef PRAGMA_FORMAT_IGNORED
+#define PRAGMA_FORMAT_IGNORED
+#endif
+#ifndef PRAGMA_FORMAT_NONLITERAL_IGNORED_INTERNAL
+#define PRAGMA_FORMAT_NONLITERAL_IGNORED_INTERNAL
+#endif
+#ifndef PRAGMA_FORMAT_NONLITERAL_IGNORED_EXTERNAL
+#define PRAGMA_FORMAT_NONLITERAL_IGNORED_EXTERNAL
+#endif
+#ifndef PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
+#define PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
+#endif
+#ifndef ATTRIBUTE_PRINTF
+#define ATTRIBUTE_PRINTF(fmt, vargs)
+#endif
+
 
 #include "utilities/macros.hpp"
 
@@ -370,6 +399,21 @@ const uint64_t KlassEncodingMetaspaceMax = (uint64_t(max_juint) + 1) << LogKlass
 
 // Machine dependent stuff
 
+#if defined(X86) && defined(COMPILER2) && !defined(JAVASE_EMBEDDED)
+// Include Restricted Transactional Memory lock eliding optimization
+#define INCLUDE_RTM_OPT 1
+#define RTM_OPT_ONLY(code) code
+#else
+#define INCLUDE_RTM_OPT 0
+#define RTM_OPT_ONLY(code)
+#endif
+// States of Restricted Transactional Memory usage.
+enum RTMState {
+  NoRTM      = 0x2, // Don't use RTM
+  UseRTM     = 0x1, // Use RTM
+  ProfileRTM = 0x0  // Use RTM with abort ratio calculation
+};
+
 #ifdef TARGET_ARCH_x86
 # include "globalDefinitions_x86.hpp"
 #endif
@@ -395,6 +439,17 @@ const uint64_t KlassEncodingMetaspaceMax = (uint64_t(max_juint) + 1) << LogKlass
 #define PLATFORM_NATIVE_STACK_WALKING_SUPPORTED 1
 #endif
 
+// To assure the IRIW property on processors that are not multiple copy
+// atomic, sync instructions must be issued between volatile reads to
+// assure their ordering, instead of after volatile stores.
+// (See "A Tutorial Introduction to the ARM and POWER Relaxed Memory Models"
+// by Luc Maranget, Susmit Sarkar and Peter Sewell, INRIA/Cambridge)
+#ifdef CPU_NOT_MULTIPLE_COPY_ATOMIC
+const bool support_IRIW_for_not_multiple_copy_atomic_cpu = true;
+#else
+const bool support_IRIW_for_not_multiple_copy_atomic_cpu = false;
+#endif
+
 // The byte alignment to be used by Arena::Amalloc.  See bugid 4169348.
 // Note: this value must be a power of 2
 
@@ -403,7 +458,7 @@ const uint64_t KlassEncodingMetaspaceMax = (uint64_t(max_juint) + 1) << LogKlass
 // Signed variants of alignment helpers.  There are two versions of each, a macro
 // for use in places like enum definitions that require compile-time constant
 // expressions and a function for all other places so as to get type checking.
-//类似round_to，但是不要求alignment是2的倍数
+
 #define align_size_up_(size, alignment) (((size) + ((alignment) - 1)) & ~((alignment) - 1))
 
 inline bool is_size_aligned(size_t size, size_t alignment) {
@@ -502,6 +557,27 @@ inline address clamp_address_in_page(address addr, address page_address, intptr_
 inline double fabsd(double value) {
   return fabs(value);
 }
+
+//----------------------------------------------------------------------------------------------------
+// Special casts
+// Cast floats into same-size integers and vice-versa w/o changing bit-pattern
+typedef union {
+  jfloat f;
+  jint i;
+} FloatIntConv;
+
+typedef union {
+  jdouble d;
+  jlong l;
+  julong ul;
+} DoubleLongConv;
+
+inline jint    jint_cast    (jfloat  x)  { return ((FloatIntConv*)&x)->i; }
+inline jfloat  jfloat_cast  (jint    x)  { return ((FloatIntConv*)&x)->f; }
+
+inline jlong   jlong_cast   (jdouble x)  { return ((DoubleLongConv*)&x)->l;  }
+inline julong  julong_cast  (jdouble x)  { return ((DoubleLongConv*)&x)->ul; }
+inline jdouble jdouble_cast (jlong   x)  { return ((DoubleLongConv*)&x)->d;  }
 
 inline jint low (jlong value)                    { return jint(value); }
 inline jint high(jlong value)                    { return jint(value >> 32); }
@@ -1103,8 +1179,6 @@ inline int exact_log2_long(jlong x) {
 
 
 // returns integer round-up to the nearest multiple of s (s must be a power of two)
-//把x转成s的最小倍数(大于等于x)，
-//比如x=7000, s=4096时，那么就返回8192
 inline intptr_t round_to(intptr_t x, uintx s) {
   #ifdef ASSERT
     if (!is_power_of_2(s)) basic_fatal("s must be a power of 2");
@@ -1114,8 +1188,6 @@ inline intptr_t round_to(intptr_t x, uintx s) {
 }
 
 // returns integer round-down to the nearest multiple of s (s must be a power of two)
-//把x转成s的最小倍数(小于等于x)，
-//比如x=8300, s=4096时，那么就返回8192
 inline intptr_t round_down(intptr_t x, uintx s) {
   #ifdef ASSERT
     if (!is_power_of_2(s)) basic_fatal("s must be a power of 2");
@@ -1259,6 +1331,11 @@ inline int build_int_from_shorts( jushort low, jushort high ) {
   return ((int)((unsigned int)high << 16) | (unsigned int)low);
 }
 
+// Convert pointer to intptr_t, for use in printing pointers.
+inline intptr_t p2i(const void * p) {
+  return (intptr_t) p;
+}
+
 // Printf-style formatters for fixed- and variable-width types as pointers and
 // integers.  These are derived from the definitions in inttypes.h.  If the platform
 // doesn't provide appropriate definitions, they should be provided in
@@ -1277,6 +1354,7 @@ inline int build_int_from_shorts( jushort low, jushort high ) {
 // Format 64-bit quantities.
 #define INT64_FORMAT           "%" PRId64
 #define UINT64_FORMAT          "%" PRIu64
+#define UINT64_FORMAT_X        "%" PRIx64
 #define INT64_FORMAT_W(width)  "%" #width PRId64
 #define UINT64_FORMAT_W(width) "%" #width PRIu64
 
@@ -1299,10 +1377,14 @@ inline int build_int_from_shorts( jushort low, jushort high ) {
 #define PTR_FORMAT    "0x%08"  PRIxPTR
 #endif  // _LP64
 
-#define SSIZE_FORMAT          "%" PRIdPTR
-#define SIZE_FORMAT           "%" PRIuPTR
-#define SSIZE_FORMAT_W(width) "%" #width PRIdPTR
-#define SIZE_FORMAT_W(width)  "%" #width PRIuPTR
+#define INTPTR_FORMAT_W(width)   "%" #width PRIxPTR
+
+#define SSIZE_FORMAT          "%"   PRIdPTR
+#define SIZE_FORMAT           "%"   PRIuPTR
+#define SIZE_FORMAT_HEX       "0x%" PRIxPTR
+#define SSIZE_FORMAT_W(width) "%"   #width PRIdPTR
+#define SIZE_FORMAT_W(width)  "%"   #width PRIuPTR
+#define SIZE_FORMAT_HEX_W(width) "0x%" #width PRIxPTR
 
 #define INTX_FORMAT           "%" PRIdPTR
 #define UINTX_FORMAT          "%" PRIuPTR
@@ -1324,10 +1406,9 @@ inline int build_int_from_shorts( jushort low, jushort high ) {
 // All C++ compilers that we know of have the vtbl pointer in the first
 // word.  If there are exceptions, this function needs to be made compiler
 // specific.
-static inline void* dereference_vptr(void* addr) {
+static inline void* dereference_vptr(const void* addr) {
   return *(void**)addr;
 }
-
 
 #ifndef PRODUCT
 

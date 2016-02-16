@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -253,6 +253,7 @@ void* BufferBlob::operator new(size_t s, unsigned size, bool is_critical) throw(
 
 void BufferBlob::free( BufferBlob *blob ) {
   ThreadInVMfromUnknown __tiv;  // get to VM state in case we block on CodeCache_lock
+  blob->flush();
   {
     MutexLockerEx mu(CodeCache_lock, Mutex::_no_safepoint_check_flag);
     CodeCache::free((CodeBlob*)blob);
@@ -530,7 +531,7 @@ void CodeBlob::verify() {
 }
 
 void CodeBlob::print_on(outputStream* st) const {
-  st->print_cr("[CodeBlob (" INTPTR_FORMAT ")]", this);
+  st->print_cr("[CodeBlob (" INTPTR_FORMAT ")]", p2i(this));
   st->print_cr("Framesize: %d", _frame_size);
 }
 
@@ -548,7 +549,7 @@ void BufferBlob::print_on(outputStream* st) const {
 }
 
 void BufferBlob::print_value_on(outputStream* st) const {
-  st->print_cr("BufferBlob (" INTPTR_FORMAT  ") used for %s", this, name());
+  st->print_cr("BufferBlob (" INTPTR_FORMAT  ") used for %s", p2i(this), name());
 }
 
 void RuntimeStub::verify() {
@@ -558,13 +559,13 @@ void RuntimeStub::verify() {
 void RuntimeStub::print_on(outputStream* st) const {
   ttyLocker ttyl;
   CodeBlob::print_on(st);
-  st->print("Runtime Stub (" INTPTR_FORMAT "): ", this);
-  st->print_cr(name());
+  st->print("Runtime Stub (" INTPTR_FORMAT "): ", p2i(this));
+  st->print_cr("%s", name());
   Disassembler::decode((CodeBlob*)this, st);
 }
 
 void RuntimeStub::print_value_on(outputStream* st) const {
-  st->print("RuntimeStub (" INTPTR_FORMAT "): ", this); st->print(name());
+  st->print("RuntimeStub (" INTPTR_FORMAT "): ", p2i(this)); st->print("%s", name());
 }
 
 void SingletonBlob::verify() {
@@ -574,12 +575,12 @@ void SingletonBlob::verify() {
 void SingletonBlob::print_on(outputStream* st) const {
   ttyLocker ttyl;
   CodeBlob::print_on(st);
-  st->print_cr(name());
+  st->print_cr("%s", name());
   Disassembler::decode((CodeBlob*)this, st);
 }
 
 void SingletonBlob::print_value_on(outputStream* st) const {
-  st->print_cr(name());
+  st->print_cr("%s", name());
 }
 
 void DeoptimizationBlob::print_value_on(outputStream* st) const {

@@ -30,21 +30,25 @@
 // non-virtually, using a mechanism defined in this file.  Extend these
 // macros in the obvious way to add specializations for new closures.
 
-// Forward declarations.
 enum G1Barrier {
   G1BarrierNone,
-  G1BarrierRS,
   G1BarrierEvac,
   G1BarrierKlass
 };
 
-template<bool do_gen_barrier, G1Barrier barrier, bool do_mark_object>
+enum G1Mark {
+  G1MarkNone,
+  G1MarkFromRoot,
+  G1MarkPromotedFromRoot
+};
+
+// Forward declarations.
+
+template<G1Barrier barrier, G1Mark do_mark_object>
 class G1ParCopyClosure;
 
 class G1ParScanClosure;
 class G1ParPushHeapRSClosure;
-
-typedef G1ParCopyClosure<false, G1BarrierEvac, false> G1ParScanHeapEvacClosure;
 
 class FilterIntoCSClosure;
 class FilterOutOfRegionClosure;
@@ -62,7 +66,6 @@ class G1UpdateRSOrPushRefOopClosure;
 #endif
 
 #define FURTHER_SPECIALIZED_OOP_OOP_ITERATE_CLOSURES(f) \
-      f(G1ParScanHeapEvacClosure,_nv)                   \
       f(G1ParScanClosure,_nv)                           \
       f(G1ParPushHeapRSClosure,_nv)                     \
       f(FilterIntoCSClosure,_nv)                        \

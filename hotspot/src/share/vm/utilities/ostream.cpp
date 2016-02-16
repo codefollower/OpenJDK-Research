@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -24,6 +24,7 @@
 
 #include "precompiled.hpp"
 #include "compiler/compileLog.hpp"
+#include "gc_implementation/shared/gcId.hpp"
 #include "oops/oop.inline.hpp"
 #include "runtime/arguments.hpp"
 #include "utilities/defaultStream.hpp"
@@ -38,6 +39,9 @@
 #endif
 #ifdef TARGET_OS_FAMILY_windows
 # include "os_windows.inline.hpp"
+#endif
+#ifdef TARGET_OS_FAMILY_aix
+# include "os_aix.inline.hpp"
 #endif
 #ifdef TARGET_OS_FAMILY_bsd
 # include "os_bsd.inline.hpp"
@@ -237,6 +241,14 @@ void outputStream::date_stamp(bool guard,
   return;
 }
 
+void outputStream::gclog_stamp(const GCId& gc_id) {
+  date_stamp(PrintGCDateStamps);
+  stamp(PrintGCTimeStamps);
+  if (PrintGCID) {
+    print("#%u: ", gc_id.id());
+  }
+}
+
 outputStream& outputStream::indent() {
   while (_position < _indentation) sp();
   return *this;
@@ -265,7 +277,7 @@ void outputStream::print_data(void* data, size_t len, bool with_ascii) {
   size_t limit = (len + 16) / 16 * 16;
   for (size_t i = 0; i < limit; ++i) {
     if (i % 16 == 0) {
-      indent().print("%07x:", i);
+      indent().print(SIZE_FORMAT_HEX_W(07)":", i);
     }
     if (i % 2 == 0) {
       print(" ");
@@ -286,7 +298,7 @@ void outputStream::print_data(void* data, size_t len, bool with_ascii) {
           }
         }
       }
-      print_cr("");
+      cr();
     }
   }
 }
@@ -353,11 +365,11 @@ stringStream::~stringStream() {}
 xmlStream*   xtty;
 outputStream* tty;
 outputStream* gclog_or_tty;
+CDS_ONLY(fileStream* classlist_file;) // Only dump the classes that can be stored into the CDS archive
 extern Mutex* tty_lock;
 
 #define EXTRACHARLEN   32
 #define CURRENTAPPX    ".current"
-#define FILENAMEBUFLEN  1024
 // convert YYYY-MM-DD HH:MM:SS to YYYY-MM-DD_HH-MM-SS
 char* get_datetime_string(char *buf, size_t len) {
   os::local_time_string(buf, len);
@@ -391,7 +403,6 @@ static const char* make_log_name_internal(const char* log_name, const char* forc
     buffer_length = strlen(log_name) + 1;
   }
 
-  // const char* star = strchr(basename, '*');
   const char* pts = strstr(basename, "%p");
   int pid_pos = (pts == NULL) ? -1 : (pts - nametail);
 
@@ -404,6 +415,11 @@ static const char* make_log_name_internal(const char* log_name, const char* forc
   int tms_pos = (pts == NULL) ? -1 : (pts - nametail);
   if (tms_pos >= 0) {
     buffer_length += strlen(tms);
+  }
+
+  // File name is too long.
+  if (buffer_length > JVM_MAXPATHLEN) {
+    return NULL;
   }
 
   // Create big enough buffer.
@@ -464,7 +480,8 @@ static const char* make_log_name_internal(const char* log_name, const char* forc
   return buf;
 }
 
-// log_name comes from -XX:LogFile=log_name or -Xloggc:log_name
+// log_name comes from -XX:LogFile=log_name, -Xloggc:log_name or
+// -XX:DumpLoadedClassList=<file_name>
 // in log_name, %p => pid1234 and
 //              %t => YYYY-MM-DD_HH-MM-SS
 static const char* make_log_name(const char* log_name, const char* force_directory) {
@@ -478,46 +495,88 @@ static const char* make_log_name(const char* log_name, const char* force_directo
 void test_loggc_filename() {
   int pid;
   char  tms[32];
-  char  i_result[FILENAMEBUFLEN];
+  char  i_result[JVM_MAXPATHLEN];
   const char* o_result;
   get_datetime_string(tms, sizeof(tms));
   pid = os::current_process_id();
 
   // test.log
-  jio_snprintf(i_result, sizeof(char)*FILENAMEBUFLEN, "test.log", tms);
+  jio_snprintf(i_result, JVM_MAXPATHLEN, "test.log", tms);
   o_result = make_log_name_internal("test.log", NULL, pid, tms);
   assert(strcmp(i_result, o_result) == 0, "failed on testing make_log_name(\"test.log\", NULL)");
   FREE_C_HEAP_ARRAY(char, o_result, mtInternal);
 
   // test-%t-%p.log
-  jio_snprintf(i_result, sizeof(char)*FILENAMEBUFLEN, "test-%s-pid%u.log", tms, pid);
+  jio_snprintf(i_result, JVM_MAXPATHLEN, "test-%s-pid%u.log", tms, pid);
   o_result = make_log_name_internal("test-%t-%p.log", NULL, pid, tms);
   assert(strcmp(i_result, o_result) == 0, "failed on testing make_log_name(\"test-%%t-%%p.log\", NULL)");
   FREE_C_HEAP_ARRAY(char, o_result, mtInternal);
 
   // test-%t%p.log
-  jio_snprintf(i_result, sizeof(char)*FILENAMEBUFLEN, "test-%spid%u.log", tms, pid);
+  jio_snprintf(i_result, JVM_MAXPATHLEN, "test-%spid%u.log", tms, pid);
   o_result = make_log_name_internal("test-%t%p.log", NULL, pid, tms);
   assert(strcmp(i_result, o_result) == 0, "failed on testing make_log_name(\"test-%%t%%p.log\", NULL)");
   FREE_C_HEAP_ARRAY(char, o_result, mtInternal);
 
   // %p%t.log
-  jio_snprintf(i_result, sizeof(char)*FILENAMEBUFLEN, "pid%u%s.log", pid, tms);
+  jio_snprintf(i_result, JVM_MAXPATHLEN, "pid%u%s.log", pid, tms);
   o_result = make_log_name_internal("%p%t.log", NULL, pid, tms);
   assert(strcmp(i_result, o_result) == 0, "failed on testing make_log_name(\"%%p%%t.log\", NULL)");
   FREE_C_HEAP_ARRAY(char, o_result, mtInternal);
 
   // %p-test.log
-  jio_snprintf(i_result, sizeof(char)*FILENAMEBUFLEN, "pid%u-test.log", pid);
+  jio_snprintf(i_result, JVM_MAXPATHLEN, "pid%u-test.log", pid);
   o_result = make_log_name_internal("%p-test.log", NULL, pid, tms);
   assert(strcmp(i_result, o_result) == 0, "failed on testing make_log_name(\"%%p-test.log\", NULL)");
   FREE_C_HEAP_ARRAY(char, o_result, mtInternal);
 
   // %t.log
-  jio_snprintf(i_result, sizeof(char)*FILENAMEBUFLEN, "%s.log", tms);
+  jio_snprintf(i_result, JVM_MAXPATHLEN, "%s.log", tms);
   o_result = make_log_name_internal("%t.log", NULL, pid, tms);
   assert(strcmp(i_result, o_result) == 0, "failed on testing make_log_name(\"%%t.log\", NULL)");
   FREE_C_HEAP_ARRAY(char, o_result, mtInternal);
+
+  {
+    // longest filename
+    char longest_name[JVM_MAXPATHLEN];
+    memset(longest_name, 'a', sizeof(longest_name));
+    longest_name[JVM_MAXPATHLEN - 1] = '\0';
+    o_result = make_log_name_internal((const char*)&longest_name, NULL, pid, tms);
+    assert(strcmp(longest_name, o_result) == 0, err_msg("longest name does not match. expected '%s' but got '%s'", longest_name, o_result));
+    FREE_C_HEAP_ARRAY(char, o_result, mtInternal);
+  }
+
+  {
+    // too long file name
+    char too_long_name[JVM_MAXPATHLEN + 100];
+    int too_long_length = sizeof(too_long_name);
+    memset(too_long_name, 'a', too_long_length);
+    too_long_name[too_long_length - 1] = '\0';
+    o_result = make_log_name_internal((const char*)&too_long_name, NULL, pid, tms);
+    assert(o_result == NULL, err_msg("Too long file name should return NULL, but got '%s'", o_result));
+  }
+
+  {
+    // too long with timestamp
+    char longest_name[JVM_MAXPATHLEN];
+    memset(longest_name, 'a', JVM_MAXPATHLEN);
+    longest_name[JVM_MAXPATHLEN - 3] = '%';
+    longest_name[JVM_MAXPATHLEN - 2] = 't';
+    longest_name[JVM_MAXPATHLEN - 1] = '\0';
+    o_result = make_log_name_internal((const char*)&longest_name, NULL, pid, tms);
+    assert(o_result == NULL, err_msg("Too long file name after timestamp expansion should return NULL, but got '%s'", o_result));
+  }
+
+  {
+    // too long with pid
+    char longest_name[JVM_MAXPATHLEN];
+    memset(longest_name, 'a', JVM_MAXPATHLEN);
+    longest_name[JVM_MAXPATHLEN - 3] = '%';
+    longest_name[JVM_MAXPATHLEN - 2] = 'p';
+    longest_name[JVM_MAXPATHLEN - 1] = '\0';
+    o_result = make_log_name_internal((const char*)&longest_name, NULL, pid, tms);
+    assert(o_result == NULL, err_msg("Too long file name after pid expansion should return NULL, but got '%s'", o_result));
+  }
 }
 #endif // PRODUCT
 
@@ -603,7 +662,7 @@ void fdStream::write(const char* s, size_t len) {
 // memory usage and command line flags into header
 void gcLogFileStream::dump_loggc_header() {
   if (is_open()) {
-    print_cr(Abstract_VM_Version::internal_vm_info_string());
+    print_cr("%s", Abstract_VM_Version::internal_vm_info_string());
     os::print_memory_info(this);
     print("CommandLine flags: ");
     CommandLineFlags::printSetFlags(this);
@@ -626,9 +685,16 @@ gcLogFileStream::gcLogFileStream(const char* file_name) {
   _bytes_written = 0L;
   _file_name = make_log_name(file_name, NULL);
 
+  if (_file_name == NULL) {
+    warning("Cannot open file %s: file name is too long.\n", file_name);
+    _need_close = false;
+    UseGCLogFileRotation = false;
+    return;
+  }
+
   // gc log file rotation
   if (UseGCLogFileRotation && NumberOfGCLogFiles > 1) {
-    char tempbuf[FILENAMEBUFLEN];
+    char tempbuf[JVM_MAXPATHLEN];
     jio_snprintf(tempbuf, sizeof(tempbuf), "%s.%d" CURRENTAPPX, _file_name, _cur_file_num);
     _file = fopen(tempbuf, "w");
   } else {
@@ -659,13 +725,13 @@ void gcLogFileStream::write(const char* s, size_t len) {
 // write to gc log file at safepoint. If in future, changes made for mutator threads or
 // concurrent GC threads to run parallel with VMThread at safepoint, write and rotate_log
 // must be synchronized.
-void gcLogFileStream::rotate_log() {
-  char time_msg[FILENAMEBUFLEN];
+void gcLogFileStream::rotate_log(bool force, outputStream* out) {
+  char time_msg[O_BUFLEN];
   char time_str[EXTRACHARLEN];
-  char current_file_name[FILENAMEBUFLEN];
-  char renamed_file_name[FILENAMEBUFLEN];
+  char current_file_name[JVM_MAXPATHLEN];
+  char renamed_file_name[JVM_MAXPATHLEN];
 
-  if (_bytes_written < (jlong)GCLogFileSize) {
+  if (!should_rotate(force)) {
     return;
   }
 
@@ -682,6 +748,11 @@ void gcLogFileStream::rotate_log() {
     jio_snprintf(time_msg, sizeof(time_msg), "File  %s rotated at %s\n",
                  _file_name, os::local_time_string((char *)time_str, sizeof(time_str)));
     write(time_msg, strlen(time_msg));
+
+    if (out != NULL) {
+      out->print("%s", time_msg);
+    }
+
     dump_loggc_header();
     return;
   }
@@ -697,17 +768,26 @@ void gcLogFileStream::rotate_log() {
   // have a form of extended_filename.<i>.current where i is the current rotation
   // file number. After it reaches max file size, the file will be saved and renamed
   // with .current removed from its tail.
-  size_t filename_len = strlen(_file_name);
   if (_file != NULL) {
-    jio_snprintf(renamed_file_name, filename_len + EXTRACHARLEN, "%s.%d",
+    jio_snprintf(renamed_file_name, JVM_MAXPATHLEN, "%s.%d",
                  _file_name, _cur_file_num);
-    jio_snprintf(current_file_name, filename_len + EXTRACHARLEN, "%s.%d" CURRENTAPPX,
-                 _file_name, _cur_file_num);
-    jio_snprintf(time_msg, sizeof(time_msg), "%s GC log file has reached the"
-                           " maximum size. Saved as %s\n",
-                           os::local_time_string((char *)time_str, sizeof(time_str)),
-                           renamed_file_name);
+    int result = jio_snprintf(current_file_name, JVM_MAXPATHLEN,
+                              "%s.%d" CURRENTAPPX, _file_name, _cur_file_num);
+    if (result >= JVM_MAXPATHLEN) {
+      warning("Cannot create new log file name: %s: file name is too long.\n", current_file_name);
+      return;
+    }
+
+    const char* msg = force ? "GC log rotation request has been received."
+                            : "GC log file has reached the maximum size.";
+    jio_snprintf(time_msg, sizeof(time_msg), "%s %s Saved as %s\n",
+                     os::local_time_string((char *)time_str, sizeof(time_str)),
+                                                         msg, renamed_file_name);
     write(time_msg, strlen(time_msg));
+
+    if (out != NULL) {
+      out->print("%s", time_msg);
+    }
 
     fclose(_file);
     _file = NULL;
@@ -735,20 +815,29 @@ void gcLogFileStream::rotate_log() {
 
   _cur_file_num++;
   if (_cur_file_num > NumberOfGCLogFiles - 1) _cur_file_num = 0;
-  jio_snprintf(current_file_name,  filename_len + EXTRACHARLEN, "%s.%d" CURRENTAPPX,
+  int result = jio_snprintf(current_file_name,  JVM_MAXPATHLEN, "%s.%d" CURRENTAPPX,
                _file_name, _cur_file_num);
+  if (result >= JVM_MAXPATHLEN) {
+    warning("Cannot create new log file name: %s: file name is too long.\n", current_file_name);
+    return;
+  }
+
   _file = fopen(current_file_name, "w");
 
   if (_file != NULL) {
     _bytes_written = 0L;
     _need_close = true;
     // reuse current_file_name for time_msg
-    jio_snprintf(current_file_name, filename_len + EXTRACHARLEN,
+    jio_snprintf(current_file_name, JVM_MAXPATHLEN,
                  "%s.%d", _file_name, _cur_file_num);
     jio_snprintf(time_msg, sizeof(time_msg), "%s GC log file created %s\n",
-                           os::local_time_string((char *)time_str, sizeof(time_str)),
-                           current_file_name);
+                 os::local_time_string((char *)time_str, sizeof(time_str)), current_file_name);
     write(time_msg, strlen(time_msg));
+
+    if (out != NULL) {
+      out->print("%s", time_msg);
+    }
+
     dump_loggc_header();
     // remove the existing file
     if (access(current_file_name, F_OK) == 0) {
@@ -790,32 +879,64 @@ bool defaultStream::has_log_file() {
   return _log_file != NULL;
 }
 
+fileStream* defaultStream::open_file(const char* log_name) {
+  const char* try_name = make_log_name(log_name, NULL);
+  if (try_name == NULL) {
+    warning("Cannot open file %s: file name is too long.\n", log_name);
+    return NULL;
+  }
+
+  fileStream* file = new(ResourceObj::C_HEAP, mtInternal) fileStream(try_name);
+  FREE_C_HEAP_ARRAY(char, try_name, mtInternal);
+  if (file->is_open()) {
+    return file;
+  }
+
+  // Try again to open the file in the temp directory.
+  delete file;
+  char warnbuf[O_BUFLEN*2];
+  jio_snprintf(warnbuf, sizeof(warnbuf), "Warning:  Cannot open log file: %s\n", log_name);
+  // Note:  This feature is for maintainer use only.  No need for L10N.
+  jio_print(warnbuf);
+  try_name = make_log_name(log_name, os::get_temp_directory());
+  if (try_name == NULL) {
+    warning("Cannot open file %s: file name is too long for directory %s.\n", log_name, os::get_temp_directory());
+    return NULL;
+  }
+
+  jio_snprintf(warnbuf, sizeof(warnbuf),
+               "Warning:  Forcing option -XX:LogFile=%s\n", try_name);
+  jio_print(warnbuf);
+
+  file = new(ResourceObj::C_HEAP, mtInternal) fileStream(try_name);
+  FREE_C_HEAP_ARRAY(char, try_name, mtInternal);
+  if (file->is_open()) {
+    return file;
+  }
+
+  delete file;
+  return NULL;
+}
+
 void defaultStream::init_log() {
   // %%% Need a MutexLocker?
   const char* log_name = LogFile != NULL ? LogFile : "hotspot_%p.log";
-  const char* try_name = make_log_name(log_name, NULL);
-  fileStream* file = new(ResourceObj::C_HEAP, mtInternal) fileStream(try_name);
-  if (!file->is_open()) {
-    // Try again to open the file.
-    char warnbuf[O_BUFLEN*2];
-    jio_snprintf(warnbuf, sizeof(warnbuf),
-                 "Warning:  Cannot open log file: %s\n", try_name);
-    // Note:  This feature is for maintainer use only.  No need for L10N.
-    jio_print(warnbuf);
-    FREE_C_HEAP_ARRAY(char, try_name, mtInternal);
-    try_name = make_log_name(log_name, os::get_temp_directory());
-    jio_snprintf(warnbuf, sizeof(warnbuf),
-                 "Warning:  Forcing option -XX:LogFile=%s\n", try_name);
-    jio_print(warnbuf);
-    delete file;
-    file = new(ResourceObj::C_HEAP, mtInternal) fileStream(try_name);
-  }
-  FREE_C_HEAP_ARRAY(char, try_name, mtInternal);
+  fileStream* file = open_file(log_name);
 
-  if (file->is_open()) {
+  if (file != NULL) {
     _log_file = file;
-    xmlStream* xs = new(ResourceObj::C_HEAP, mtInternal) xmlStream(file);
-    _outer_xmlStream = xs;
+    _outer_xmlStream = new(ResourceObj::C_HEAP, mtInternal) xmlStream(file);
+    start_log();
+  } else {
+    // and leave xtty as NULL
+    LogVMOutput = false;
+    DisplayVMOutput = true;
+    LogCompilation = false;
+  }
+}
+
+void defaultStream::start_log() {
+  xmlStream*xs = _outer_xmlStream;
     if (this == tty)  xtty = xs;
     // Write XML header.
     xs->print_cr("<?xml version='1.0' encoding='UTF-8'?>");
@@ -826,7 +947,7 @@ void defaultStream::init_log() {
     xs->head("hotspot_log version='%d %d'"
              " process='%d' time_ms='"INT64_FORMAT"'",
              LOG_MAJOR_VERSION, LOG_MINOR_VERSION,
-             os::current_process_id(), time_ms);
+             os::current_process_id(), (int64_t)time_ms);
     // Write VM version header immediately.
     xs->head("vm_version");
     xs->head("name"); xs->text("%s", VM_Version::vm_name()); xs->cr();
@@ -870,13 +991,6 @@ void defaultStream::init_log() {
     xs->head("tty");
     // All further non-markup text gets copied to the tty:
     xs->_text = this;  // requires friend declaration!
-  } else {
-    delete(file);
-    // and leave xtty as NULL
-    LogVMOutput = false;
-    DisplayVMOutput = true;
-    LogCompilation = false;
-  }
 }
 
 // finish_log() is called during normal VM shutdown. finish_log_on_error() is
@@ -1061,9 +1175,6 @@ void ttyLocker::break_tty_lock_for_safepoint(intx holder) {
 
 void ostream_init() {
   if (defaultStream::instance == NULL) {
-	//会先调用share\vm\memory\allocation.cpp的
-	//ResourceObj::operator new(size_t size, allocation_type type, MEMFLAGS flags)
-	//size参数是怎么传过去的？这里没有传啊(size参数是自动传过去的，相当于sizeof操作，这是C++的隐式规则)
     defaultStream::instance = new(ResourceObj::C_HEAP, mtInternal) defaultStream();
     tty = defaultStream::instance;
 
@@ -1091,6 +1202,16 @@ void ostream_init_log() {
     gclog_or_tty = gclog;
   }
 
+#if INCLUDE_CDS
+  // For -XX:DumpLoadedClassList=<file> option
+  if (DumpLoadedClassList != NULL) {
+    const char* list_name = make_log_name(DumpLoadedClassList, NULL);
+    classlist_file = new(ResourceObj::C_HEAP, mtInternal)
+                         fileStream(list_name);
+    FREE_C_HEAP_ARRAY(char, list_name, mtInternal);
+  }
+#endif
+
   // If we haven't lazily initialized the logfile yet, do it now,
   // to avoid the possibility of lazy initialization during a VM
   // crash, which can affect the stability of the fatal error handler.
@@ -1103,6 +1224,11 @@ void ostream_exit() {
   static bool ostream_exit_called = false;
   if (ostream_exit_called)  return;
   ostream_exit_called = true;
+#if INCLUDE_CDS
+  if (classlist_file != NULL) {
+    delete classlist_file;
+  }
+#endif
   if (gclog_or_tty != tty) {
       delete gclog_or_tty;
   }
@@ -1241,7 +1367,7 @@ bufferedStream::~bufferedStream() {
 
 #ifndef PRODUCT
 
-#if defined(SOLARIS) || defined(LINUX) || defined(_ALLBSD_SOURCE)
+#if defined(SOLARIS) || defined(LINUX) || defined(AIX) || defined(_ALLBSD_SOURCE)
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>

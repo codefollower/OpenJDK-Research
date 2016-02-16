@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -75,6 +75,7 @@ class ClassFileParser VALUE_OBJ_CLASS_SPEC {
   Array<u2>*       _inner_classes;
   Array<Klass*>*   _local_interfaces;
   Array<Klass*>*   _transitive_interfaces;
+  Annotations*     _combined_annotations;
   AnnotationArray* _annotations;
   AnnotationArray* _type_annotations;
   Array<AnnotationArray*>* _fields_annotations;
@@ -85,6 +86,8 @@ class ClassFileParser VALUE_OBJ_CLASS_SPEC {
   void set_class_sourcefile_index(u2 x)        { _sourcefile_index = x; }
   void set_class_generic_signature_index(u2 x) { _generic_signature_index = x; }
   void set_class_sde_buffer(char* x, int len)  { _sde_buffer = x; _sde_length = len; }
+
+  void create_combined_annotations(TRAPS);
 
   void init_parsed_class_attributes(ClassLoaderData* loader_data) {
     _loader_data = loader_data;
@@ -110,6 +113,7 @@ class ClassFileParser VALUE_OBJ_CLASS_SPEC {
     _inner_classes = NULL;
     _local_interfaces = NULL;
     _transitive_interfaces = NULL;
+    _combined_annotations = NULL;
     _annotations = _type_annotations = NULL;
     _fields_annotations = _fields_type_annotations = NULL;
   }
@@ -247,7 +251,7 @@ class ClassFileParser VALUE_OBJ_CLASS_SPEC {
   Array<Method*>* parse_methods(bool is_interface,
                                 AccessFlags* promoted_flags,
                                 bool* has_final_method,
-                                bool* has_default_method,
+                                bool* declares_default_methods,
                                 TRAPS);
   intArray* sort_methods(Array<Method*>* methods);
 
@@ -266,6 +270,7 @@ class ClassFileParser VALUE_OBJ_CLASS_SPEC {
   u1* parse_stackmap_table(u4 code_attribute_length, TRAPS);
 
   // Classfile attribute parsing
+  u2 parse_generic_signature_attribute(TRAPS);
   void parse_classfile_sourcefile_attribute(TRAPS);
   void parse_classfile_source_debug_extension_attribute(int length, TRAPS);
   u2   parse_classfile_inner_classes_attribute(u1* inner_classes_attribute_start,
@@ -312,7 +317,9 @@ class ClassFileParser VALUE_OBJ_CLASS_SPEC {
     if (!b) { classfile_parse_error(msg, CHECK); }
   }
 
-  inline void assert_property(bool b, const char* msg, TRAPS) {
+PRAGMA_DIAG_PUSH
+PRAGMA_FORMAT_NONLITERAL_IGNORED
+inline void assert_property(bool b, const char* msg, TRAPS) {
 #ifdef ASSERT
     if (!b) {
       ResourceMark rm(THREAD);
@@ -329,6 +336,7 @@ class ClassFileParser VALUE_OBJ_CLASS_SPEC {
     }
 #endif
   }
+PRAGMA_DIAG_POP
 
   inline void check_property(bool property, const char* msg, int index, TRAPS) {
     if (_need_verify) {

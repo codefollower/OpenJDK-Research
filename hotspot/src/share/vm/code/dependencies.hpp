@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2012, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -287,7 +287,7 @@ class Dependencies: public ResourceObj {
   // In that case, there would be a middle ground between concrete
   // and abstract (as defined by the Java language and VM).
   static bool is_concrete_klass(Klass* k);    // k is instantiable
-  static bool is_concrete_method(Method* m);  // m is invocable
+  static bool is_concrete_method(Method* m, Klass* k);  // m is invocable
   static Klass* find_finalizable_subclass(Klass* k);
 
   // These versions of the concreteness queries work through the CI.
@@ -301,7 +301,6 @@ class Dependencies: public ResourceObj {
   // not go back into the VM to get their value; they must cache the
   // bit in the CI, either eagerly or lazily.)
   static bool is_concrete_klass(ciInstanceKlass* k); // k appears instantiable
-  static bool is_concrete_method(ciMethod* m);       // m appears invocable
   static bool has_finalizable_subclass(ciInstanceKlass* k);
 
   // As a general rule, it is OK to compile under the assumption that
@@ -348,7 +347,6 @@ class Dependencies: public ResourceObj {
   static Klass*    find_unique_concrete_subtype(Klass* ctxk);
   static Method*   find_unique_concrete_method(Klass* ctxk, Method* m);
   static int       find_exclusive_concrete_subtypes(Klass* ctxk, int klen, Klass* k[]);
-  static int       find_exclusive_concrete_methods(Klass* ctxk, int mlen, Method* m[]);
 
   // Create the encoding which will be stored in an nmethod.
   void encode_content_bytes();
@@ -368,20 +366,36 @@ class Dependencies: public ResourceObj {
   void copy_to(nmethod* nm);
 
   void log_all_dependencies();
-  void log_dependency(DepType dept, int nargs, ciBaseObject* args[]) {
-    write_dependency_to(log(), dept, nargs, args);
+
+  void log_dependency(DepType dept, GrowableArray<ciBaseObject*>* args) {
+    ResourceMark rm;
+    int argslen = args->length();
+    write_dependency_to(log(), dept, args);
+    guarantee(argslen == args->length(),
+              "args array cannot grow inside nested ResoureMark scope");
   }
+
   void log_dependency(DepType dept,
                       ciBaseObject* x0,
                       ciBaseObject* x1 = NULL,
                       ciBaseObject* x2 = NULL) {
-    if (log() == NULL)  return;
-    ciBaseObject* args[max_arg_count];
-    args[0] = x0;
-    args[1] = x1;
-    args[2] = x2;
-    assert(2 < max_arg_count, "");
-    log_dependency(dept, dep_args(dept), args);
+    if (log() == NULL) {
+      return;
+    }
+    ResourceMark rm;
+    GrowableArray<ciBaseObject*>* ciargs =
+                new GrowableArray<ciBaseObject*>(dep_args(dept));
+    assert (x0 != NULL, "no log x0");
+    ciargs->push(x0);
+
+    if (x1 != NULL) {
+      ciargs->push(x1);
+    }
+    if (x2 != NULL) {
+      ciargs->push(x2);
+    }
+    assert(ciargs->length() == dep_args(dept), "");
+    log_dependency(dept, ciargs);
   }
 
   class DepArgument : public ResourceObj {
@@ -404,20 +418,8 @@ class Dependencies: public ResourceObj {
     Metadata* metadata_value() const { assert(!_is_oop && _valid, "must be"); return (Metadata*) _value; }
   };
 
-  static void write_dependency_to(CompileLog* log,
-                                  DepType dept,
-                                  int nargs, ciBaseObject* args[],
-                                  Klass* witness = NULL);
-  static void write_dependency_to(CompileLog* log,
-                                  DepType dept,
-                                  int nargs, DepArgument args[],
-                                  Klass* witness = NULL);
-  static void write_dependency_to(xmlStream* xtty,
-                                  DepType dept,
-                                  int nargs, DepArgument args[],
-                                  Klass* witness = NULL);
   static void print_dependency(DepType dept,
-                               int nargs, DepArgument args[],
+                               GrowableArray<DepArgument>* args,
                                Klass* witness = NULL);
 
  private:
@@ -426,6 +428,18 @@ class Dependencies: public ResourceObj {
 
   static Klass* ctxk_encoded_as_null(DepType dept, Metadata* x);
 
+  static void write_dependency_to(CompileLog* log,
+                                  DepType dept,
+                                  GrowableArray<ciBaseObject*>* args,
+                                  Klass* witness = NULL);
+  static void write_dependency_to(CompileLog* log,
+                                  DepType dept,
+                                  GrowableArray<DepArgument>* args,
+                                  Klass* witness = NULL);
+  static void write_dependency_to(xmlStream* xtty,
+                                  DepType dept,
+                                  GrowableArray<DepArgument>* args,
+                                  Klass* witness = NULL);
  public:
   // Use this to iterate over an nmethod's dependency set.
   // Works on new and old dependency sets.

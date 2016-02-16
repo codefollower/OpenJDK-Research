@@ -38,6 +38,9 @@
 #ifdef TARGET_OS_FAMILY_windows
 # include "os_windows.inline.hpp"
 #endif
+#ifdef TARGET_OS_FAMILY_aix
+# include "os_aix.inline.hpp"
+#endif
 #ifdef TARGET_OS_FAMILY_bsd
 # include "os_bsd.inline.hpp"
 #endif
@@ -68,7 +71,7 @@ ParMarkBitMap::initialize(MemRegion covered_region)
   if (_virtual_space != NULL && _virtual_space->expand_by(_reserved_byte_size)) {
     _region_start = covered_region.start();
     _region_size = covered_region.word_size();
-    idx_t* map = (idx_t*)_virtual_space->reserved_low_addr();
+    BitMap::bm_word_t* map = (BitMap::bm_word_t*)_virtual_space->reserved_low_addr();
     _beg_bits.set_map(map);
     _beg_bits.set_size(bits / 2);
     _end_bits.set_map(map + words / 2);

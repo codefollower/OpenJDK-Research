@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -61,10 +61,6 @@ class java_lang_String : AllStatic {
 
   static Handle basic_create(int length, TRAPS);
 
-  static void set_value( oop string, typeArrayOop buffer) {
-    assert(initialized, "Must be initialized");
-    string->obj_field_put(value_offset,  (oop)buffer);
-  }
   static void set_offset(oop string, int offset) {
     assert(initialized, "Must be initialized");
     if (offset_offset > 0) {
@@ -122,11 +118,25 @@ class java_lang_String : AllStatic {
     return hash_offset;
   }
 
+  static void set_value(oop string, typeArrayOop buffer) {
+    assert(initialized && (value_offset > 0), "Must be initialized");
+    string->obj_field_put(value_offset, (oop)buffer);
+  }
+  static void set_hash(oop string, unsigned int hash) {
+    assert(initialized && (hash_offset > 0), "Must be initialized");
+    string->int_field_put(hash_offset, hash);
+  }
+
   // Accessors
   static typeArrayOop value(oop java_string) {
     assert(initialized && (value_offset > 0), "Must be initialized");
     assert(is_instance(java_string), "must be java_string");
     return (typeArrayOop) java_string->obj_field(value_offset);
+  }
+  static unsigned int hash(oop java_string) {
+    assert(initialized && (hash_offset > 0), "Must be initialized");
+    assert(is_instance(java_string), "must be java_string");
+    return java_string->int_field(hash_offset);
   }
   static int offset(oop java_string) {
     assert(initialized, "Must be initialized");
@@ -198,7 +208,7 @@ class java_lang_String : AllStatic {
   }
 
   // Debugging
-  static void print(Handle java_string, outputStream* st);
+  static void print(oop java_string, outputStream* st);
   friend class JavaClasses;
 };
 
@@ -229,18 +239,23 @@ class java_lang_Class : AllStatic {
   static int _protection_domain_offset;
   static int _init_lock_offset;
   static int _signers_offset;
+  static int _class_loader_offset;
 
   static bool offsets_computed;
   static int classRedefinedCount_offset;
+
   static GrowableArray<Klass*>* _fixup_mirror_list;
 
   static void set_init_lock(oop java_class, oop init_lock);
   static void set_protection_domain(oop java_class, oop protection_domain);
+  static void set_class_loader(oop java_class, oop class_loader);
+  static void initialize_mirror_fields(KlassHandle k, Handle mirror, Handle protection_domain, TRAPS);
  public:
   static void compute_offsets();
 
   // Instance creation
-  static oop  create_mirror(KlassHandle k, Handle protection_domain, TRAPS);
+  static void create_mirror(KlassHandle k, Handle class_loader,
+                            Handle protection_domain, TRAPS);
   static void fixup_mirror(KlassHandle k, TRAPS);
   static oop  create_basic_type_mirror(const char* basic_type_name, BasicType type, TRAPS);
   // Conversion
@@ -277,6 +292,8 @@ class java_lang_Class : AllStatic {
   static oop  init_lock(oop java_class);
   static objArrayOop  signers(oop java_class);
   static void set_signers(oop java_class, objArrayOop signers);
+
+  static oop class_loader(oop java_class);
 
   static int oop_size(oop java_class);
   static void set_oop_size(oop java_class, int size);
@@ -1079,7 +1096,8 @@ class java_lang_invoke_MemberName: AllStatic {
   static Metadata*      vmtarget(oop mname);
   static void       set_vmtarget(oop mname, Metadata* target);
 #if INCLUDE_JVMTI
-  static void       adjust_vmtarget(oop mname, Metadata* target);
+  static void       adjust_vmtarget(oop mname, Method* old_method, Method* new_method,
+                                    bool* trace_name_printed);
 #endif // INCLUDE_JVMTI
 
   static intptr_t       vmindex(oop mname);
@@ -1092,6 +1110,8 @@ class java_lang_invoke_MemberName: AllStatic {
   static bool is_instance(oop obj) {
     return obj != NULL && is_subclass(obj->klass());
   }
+
+  static bool is_method(oop obj);
 
   // Relevant integer codes (keep these in synch. with MethodHandleNatives.Constants):
   enum {
@@ -1372,7 +1392,7 @@ class java_util_concurrent_locks_AbstractOwnableSynchronizer : AllStatic {
 
 class InjectedField {
  public:
-  const SystemDictionary::WKID klass_id; //WKID 是well known id的缩写
+  const SystemDictionary::WKID klass_id;
   const vmSymbols::SID name_index;
   const vmSymbols::SID signature_index;
   const bool           may_be_java;

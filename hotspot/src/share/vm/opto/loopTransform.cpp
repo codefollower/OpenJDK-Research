@@ -269,10 +269,9 @@ void IdealLoopTree::reassociate_invariants(PhaseIdealLoop *phase) {
 bool IdealLoopTree::policy_peeling( PhaseIdealLoop *phase ) const {
   Node *test = ((IdealLoopTree*)this)->tail();
   int  body_size = ((IdealLoopTree*)this)->_body.size();
-  int  live_node_count = phase->C->live_nodes();
   // Peeling does loop cloning which can result in O(N^2) node construction
   if( body_size > 255 /* Prevent overflow for large body_size */
-      || (body_size * body_size + live_node_count > MaxNodeLimit) ) {
+      || (body_size * body_size + phase->C->live_nodes()) > phase->C->max_node_limit() ) {
     return false;           // too large to safely clone
   }
   while( test != _head ) {      // Scan till run off top of loop
@@ -601,7 +600,7 @@ bool IdealLoopTree::policy_maximally_unroll( PhaseIdealLoop *phase ) const {
     return false;
   if (new_body_size > unroll_limit ||
       // Unrolling can result in a large amount of node construction
-      new_body_size >= MaxNodeLimit - (uint) phase->C->live_nodes()) {
+      new_body_size >= phase->C->max_node_limit() - phase->C->live_nodes()) {
     return false;
   }
 
@@ -617,6 +616,15 @@ bool IdealLoopTree::policy_maximally_unroll( PhaseIdealLoop *phase ) const {
       case Op_AryEq: {
         return false;
       }
+#if INCLUDE_RTM_OPT
+      case Op_FastLock:
+      case Op_FastUnlock: {
+        // Don't unroll RTM locking code because it is large.
+        if (UseRTMLocking) {
+          return false;
+        }
+      }
+#endif
     } // switch
   }
 
@@ -713,10 +721,6 @@ bool IdealLoopTree::policy_unroll( PhaseIdealLoop *phase ) const {
       case Op_ModL: body_size += 30; break;
       case Op_DivL: body_size += 30; break;
       case Op_MulL: body_size += 10; break;
-      case Op_FlagsProj:
-        // Can't handle unrolling of loops containing
-        // nodes that generate a FlagsProj at the moment
-        return false;
       case Op_StrComp:
       case Op_StrEquals:
       case Op_StrIndexOf:
@@ -726,6 +730,15 @@ bool IdealLoopTree::policy_unroll( PhaseIdealLoop *phase ) const {
         // String intrinsics are large and have loops.
         return false;
       }
+#if INCLUDE_RTM_OPT
+      case Op_FastLock:
+      case Op_FastUnlock: {
+        // Don't unroll RTM locking code because it is large.
+        if (UseRTMLocking) {
+          return false;
+        }
+      }
+#endif
     } // switch
   }
 
@@ -780,10 +793,6 @@ bool IdealLoopTree::policy_range_check( PhaseIdealLoop *phase ) const {
         continue; // not RC
 
       Node *cmp = bol->in(1);
-      if (cmp->is_FlagsProj()) {
-        continue;
-      }
-
       Node *rc_exp = cmp->in(1);
       Node *limit = cmp->in(2);
 
@@ -870,6 +879,20 @@ Node *PhaseIdealLoop::clone_up_backedge_goo( Node *back_ctrl, Node *preheader_ct
     set_ctrl( n, find_non_split_ctrl(back_ctrl->in(0)) );
   }
   return n;
+}
+
+bool PhaseIdealLoop::cast_incr_before_loop(Node* incr, Node* ctrl, Node* loop) {
+  Node* castii = new (C) CastIINode(incr, TypeInt::INT, true);
+  castii->set_req(0, ctrl);
+  register_new_node(castii, ctrl);
+  for (DUIterator_Fast imax, i = incr->fast_outs(imax); i < imax; i++) {
+    Node* n = incr->fast_out(i);
+    if (n->is_Phi() && n->in(0) == loop) {
+      int nrep = n->replace_edge(incr, castii);
+      return true;
+    }
+  }
+  return false;
 }
 
 //------------------------------insert_pre_post_loops--------------------------
@@ -1070,6 +1093,24 @@ void PhaseIdealLoop::insert_pre_post_loops( IdealLoopTree *loop, Node_List &old_
     }
   }
 
+  // Nodes inside the loop may be control dependent on a predicate
+  // that was moved before the preloop. If the back branch of the main
+  // or post loops becomes dead, those nodes won't be dependent on the
+  // test that guards that loop nest anymore which could lead to an
+  // incorrect array access because it executes independently of the
+  // test that was guarding the loop nest. We add a special CastII on
+  // the if branch that enters the loop, between the input induction
+  // variable value and the induction variable Phi to preserve correct
+  // dependencies.
+
+  // CastII for the post loop:
+  bool inserted = cast_incr_before_loop(zer_opaq->in(1), zer_taken, post_head);
+  assert(inserted, "no castII inserted");
+
+  // CastII for the main loop:
+  inserted = cast_incr_before_loop(pre_incr, min_taken, main_head);
+  assert(inserted, "no castII inserted");
+
   // Step B4: Shorten the pre-loop to run only 1 iteration (for now).
   // RCE and alignment may change this later.
   Node *cmp_end = pre_end->cmp_node();
@@ -1137,6 +1178,7 @@ void PhaseIdealLoop::insert_pre_post_loops( IdealLoopTree *loop, Node_List &old_
   // Now force out all loop-invariant dominating tests.  The optimizer
   // finds some, but we _know_ they are all useless.
   peeled_dom_test_elim(loop,old_new);
+  loop->record_for_igvn();
 }
 
 //------------------------------is_invariant-----------------------------
@@ -2276,8 +2318,8 @@ bool IdealLoopTree::iteration_split_impl( PhaseIdealLoop *phase, Node_List &old_
 
   // Skip next optimizations if running low on nodes. Note that
   // policy_unswitching and policy_maximally_unroll have this check.
-  uint nodes_left = MaxNodeLimit - (uint) phase->C->live_nodes();
-  if ((2 * _body.size()) > nodes_left) {
+  int nodes_left = phase->C->max_node_limit() - phase->C->live_nodes();
+  if ((int)(2 * _body.size()) > nodes_left) {
     return true;
   }
 
@@ -2699,27 +2741,38 @@ bool PhaseIdealLoop::intrinsify_fill(IdealLoopTree* lpt) {
     _igvn.register_new_node_with_optimizer(store_value);
   }
 
+  if (CCallingConventionRequiresIntsAsLongs &&
+      // See StubRoutines::select_fill_function for types. FLOAT has been converted to INT.
+      (t == T_FLOAT || t == T_INT ||  is_subword_type(t))) {
+    store_value = new (C) ConvI2LNode(store_value);
+    _igvn.register_new_node_with_optimizer(store_value);
+  }
+
   Node* mem_phi = store->in(MemNode::Memory);
   Node* result_ctrl;
   Node* result_mem;
   const TypeFunc* call_type = OptoRuntime::array_fill_Type();
   CallLeafNode *call = new (C) CallLeafNoFPNode(call_type, fill,
                                                 fill_name, TypeAryPtr::get_array_body_type(t));
-  call->init_req(TypeFunc::Parms+0, from);
-  call->init_req(TypeFunc::Parms+1, store_value);
+  uint cnt = 0;
+  call->init_req(TypeFunc::Parms + cnt++, from);
+  call->init_req(TypeFunc::Parms + cnt++, store_value);
+  if (CCallingConventionRequiresIntsAsLongs) {
+    call->init_req(TypeFunc::Parms + cnt++, C->top());
+  }
 #ifdef _LP64
   len = new (C) ConvI2LNode(len);
   _igvn.register_new_node_with_optimizer(len);
 #endif
-  call->init_req(TypeFunc::Parms+2, len);
+  call->init_req(TypeFunc::Parms + cnt++, len);
 #ifdef _LP64
-  call->init_req(TypeFunc::Parms+3, C->top());
+  call->init_req(TypeFunc::Parms + cnt++, C->top());
 #endif
-  call->init_req( TypeFunc::Control, head->init_control());
-  call->init_req( TypeFunc::I_O    , C->top() )        ;   // does no i/o
-  call->init_req( TypeFunc::Memory ,  mem_phi->in(LoopNode::EntryControl) );
-  call->init_req( TypeFunc::ReturnAdr, C->start()->proj_out(TypeFunc::ReturnAdr) );
-  call->init_req( TypeFunc::FramePtr, C->start()->proj_out(TypeFunc::FramePtr) );
+  call->init_req(TypeFunc::Control,   head->init_control());
+  call->init_req(TypeFunc::I_O,       C->top());       // Does no I/O.
+  call->init_req(TypeFunc::Memory,    mem_phi->in(LoopNode::EntryControl));
+  call->init_req(TypeFunc::ReturnAdr, C->start()->proj_out(TypeFunc::ReturnAdr));
+  call->init_req(TypeFunc::FramePtr,  C->start()->proj_out(TypeFunc::FramePtr));
   _igvn.register_new_node_with_optimizer(call);
   result_ctrl = new (C) ProjNode(call,TypeFunc::Control);
   _igvn.register_new_node_with_optimizer(result_ctrl);

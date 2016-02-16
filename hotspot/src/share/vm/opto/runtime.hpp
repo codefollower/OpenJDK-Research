@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -29,6 +29,7 @@
 #include "opto/machnode.hpp"
 #include "opto/type.hpp"
 #include "runtime/biasedLocking.hpp"
+#include "runtime/rtmLocking.hpp"
 #include "runtime/deoptimization.hpp"
 #include "runtime/vframe.hpp"
 
@@ -61,7 +62,8 @@ public:
     NoTag,
     LockCounter,
     EliminatedLockCounter,
-    BiasedLockingCounter
+    BiasedLockingCounter,
+    RTMLockingCounter
   };
 
 private:
@@ -85,7 +87,7 @@ private:
 
   NamedCounter* next() const    { return _next; }
   void set_next(NamedCounter* next) {
-    assert(_next == NULL, "already set");
+    assert(_next == NULL || next == NULL, "already set");
     _next = next;
   }
 
@@ -100,6 +102,18 @@ class BiasedLockingNamedCounter : public NamedCounter {
     NamedCounter(n, BiasedLockingCounter), _counters() {}
 
   BiasedLockingCounters* counters() { return &_counters; }
+};
+
+
+class RTMLockingNamedCounter : public NamedCounter {
+ private:
+ RTMLockingCounters _counters;
+
+ public:
+  RTMLockingNamedCounter(const char *n) :
+    NamedCounter(n, RTMLockingCounter), _counters() {}
+
+  RTMLockingCounters* counters() { return &_counters; }
 };
 
 typedef const TypeFunc*(*TypeFunc_generator)();
@@ -285,6 +299,11 @@ private:
 
   static const TypeFunc* aescrypt_block_Type();
   static const TypeFunc* cipherBlockChaining_aescrypt_Type();
+
+  static const TypeFunc* sha_implCompress_Type();
+  static const TypeFunc* digestBase_implCompressMB_Type();
+
+  static const TypeFunc* multiplyToLen_Type();
 
   static const TypeFunc* updateBytesCRC32_Type();
 

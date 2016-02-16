@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -27,6 +27,7 @@
 
 #include "code/oopRecorder.hpp"
 #include "code/relocInfo.hpp"
+#include "utilities/debug.hpp"
 
 class CodeStrings;
 class PhaseCFG;
@@ -173,7 +174,7 @@ class CodeSection VALUE_OBJ_CLASS_SPEC {
   bool allocates(address pc) const  { return pc >= _start && pc <  _limit; }
   bool allocates2(address pc) const { return pc >= _start && pc <= _limit; }
 
-  void    set_end(address pc)       { assert(allocates2(pc), err_msg("not in CodeBuffer memory: " PTR_FORMAT " <= " PTR_FORMAT " <= " PTR_FORMAT, _start, pc, _limit)); _end = pc; }
+  void    set_end(address pc)       { assert(allocates2(pc), err_msg("not in CodeBuffer memory: " PTR_FORMAT " <= " PTR_FORMAT " <= " INTPTR_FORMAT, p2i(_start), p2i(pc), p2i(_limit))); _end = pc; }
   void    set_mark(address pc)      { assert(contains2(pc), "not in codeBuffer");
                                       _mark = pc; }
   void    set_mark_off(int offset)  { assert(contains2(offset+_start),"not in codeBuffer");
@@ -245,15 +246,39 @@ class CodeStrings VALUE_OBJ_CLASS_SPEC {
 private:
 #ifndef PRODUCT
   CodeString* _strings;
+#ifdef ASSERT
+  // Becomes true after copy-out, forbids further use.
+  bool _defunct; // Zero bit pattern is "valid", see memset call in decode_env::decode_env
+#endif
 #endif
 
   CodeString* find(intptr_t offset) const;
   CodeString* find_last(intptr_t offset) const;
 
+  void set_null_and_invalidate() {
+#ifndef PRODUCT
+    _strings = NULL;
+#ifdef ASSERT
+    _defunct = true;
+#endif
+#endif
+  }
+
 public:
   CodeStrings() {
 #ifndef PRODUCT
     _strings = NULL;
+#ifdef ASSERT
+    _defunct = false;
+#endif
+#endif
+  }
+
+  bool is_null() {
+#ifdef ASSERT
+    return _strings == NULL;
+#else
+    return true;
 #endif
   }
 
@@ -261,8 +286,17 @@ public:
 
   void add_comment(intptr_t offset, const char * comment) PRODUCT_RETURN;
   void print_block_comment(outputStream* stream, intptr_t offset) const PRODUCT_RETURN;
+  // MOVE strings from other to this; invalidate other.
   void assign(CodeStrings& other)  PRODUCT_RETURN;
+  // COPY strings from other to this; leave other valid.
+  void copy(CodeStrings& other)  PRODUCT_RETURN;
   void free() PRODUCT_RETURN;
+  // Guarantee that _strings are used at most once; assign invalidates a buffer.
+  inline void check_valid() const {
+#ifdef ASSERT
+    assert(!_defunct, "Use of invalid CodeStrings");
+#endif
+  }
 };
 
 // A CodeBuffer describes a memory space into which assembly
@@ -330,7 +364,7 @@ class CodeBuffer: public StackObj {
   csize_t      _total_size;     // size in bytes of combined memory buffer
 
   OopRecorder* _oop_recorder;
-  CodeStrings  _strings;
+  CodeStrings  _code_strings;
   OopRecorder  _default_oop_recorder;  // override with initialize_oop_recorder
   Arena*       _overflow_arena;
 
@@ -531,7 +565,13 @@ class CodeBuffer: public StackObj {
   void initialize_oop_recorder(OopRecorder* r);
 
   OopRecorder* oop_recorder() const   { return _oop_recorder; }
-  CodeStrings& strings()              { return _strings; }
+  CodeStrings& strings()              { return _code_strings; }
+
+  void free_strings() {
+    if (!_code_strings.is_null()) {
+      _code_strings.free(); // sets _strings Null as a side-effect.
+    }
+  }
 
   // Code generation
   void relocate(address at, RelocationHolder const& rspec, int format = 0) {

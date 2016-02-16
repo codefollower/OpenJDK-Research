@@ -58,7 +58,7 @@ void LIR_Assembler::patching_epilog(PatchingStub* patch, LIR_PatchCode patch_cod
     _masm->nop();
   }
   patch->install(_masm, patch_code, obj, info);
-  append_patching_stub(patch);
+  append_code_stub(patch);
 
 #ifdef ASSERT
   Bytecodes::Code code = info->scope()->method()->java_code_at_bci(info->stack()->bci());
@@ -131,11 +131,6 @@ LIR_Assembler::~LIR_Assembler() {
 }
 
 
-void LIR_Assembler::append_patching_stub(PatchingStub* stub) {
-  _slow_case_stubs->append(stub);
-}
-
-
 void LIR_Assembler::check_codespace() {
   CodeSection* cs = _masm->code_section();
   if (cs->remaining() < (int)(NOT_LP64(1*K)LP64_ONLY(2*K))) {
@@ -144,7 +139,7 @@ void LIR_Assembler::check_codespace() {
 }
 
 
-void LIR_Assembler::emit_code_stub(CodeStub* stub) {
+void LIR_Assembler::append_code_stub(CodeStub* stub) {
   _slow_case_stubs->append(stub);
 }
 
@@ -190,6 +185,13 @@ address LIR_Assembler::pc() const {
   return _masm->pc();
 }
 
+// To bang the stack of this compiled method we use the stack size
+// that the interpreter would need in case of a deoptimization. This
+// removes the need to bang the stack in the deoptimization blob which
+// in turn simplifies stack overflow handling.
+int LIR_Assembler::bang_size_in_bytes() const {
+  return MAX2(initial_frame_size_in_bytes(), _compilation->interpreter_frame_size());
+}
 
 void LIR_Assembler::emit_exception_entries(ExceptionInfoList* info_list) {
   for (int i = 0; i < info_list->length(); i++) {
@@ -435,7 +437,7 @@ void LIR_Assembler::add_debug_info_for_null_check_here(CodeEmitInfo* cinfo) {
 
 void LIR_Assembler::add_debug_info_for_null_check(int pc_offset, CodeEmitInfo* cinfo) {
   ImplicitNullCheckStub* stub = new ImplicitNullCheckStub(pc_offset, cinfo);
-  emit_code_stub(stub);
+  append_code_stub(stub);
 }
 
 void LIR_Assembler::add_debug_info_for_div0_here(CodeEmitInfo* info) {
@@ -444,7 +446,7 @@ void LIR_Assembler::add_debug_info_for_div0_here(CodeEmitInfo* info) {
 
 void LIR_Assembler::add_debug_info_for_div0(int pc_offset, CodeEmitInfo* cinfo) {
   DivByZeroStub* stub = new DivByZeroStub(pc_offset, cinfo);
-  emit_code_stub(stub);
+  append_code_stub(stub);
 }
 
 void LIR_Assembler::emit_rtcall(LIR_OpRTCall* op) {
@@ -797,7 +799,7 @@ void LIR_Assembler::emit_op2(LIR_Op2* op) {
 
 
 void LIR_Assembler::build_frame() {
-  _masm->build_frame(initial_frame_size_in_bytes());
+  _masm->build_frame(initial_frame_size_in_bytes(), bang_size_in_bytes());
 }
 
 
@@ -858,9 +860,7 @@ void LIR_Assembler::move_op(LIR_Opr src, LIR_Opr dest, BasicType type, LIR_Patch
 
 void LIR_Assembler::verify_oop_map(CodeEmitInfo* info) {
 #ifndef PRODUCT
-  if (VerifyOopMaps || VerifyOops) {
-    bool v = VerifyOops;
-    VerifyOops = true;
+  if (VerifyOops) {
     OopMapStream s(info->oop_map());
     while (!s.is_done()) {
       OopMapValue v = s.current();
@@ -883,7 +883,6 @@ void LIR_Assembler::verify_oop_map(CodeEmitInfo* info) {
 
       s.next();
     }
-    VerifyOops = v;
   }
 #endif
 }

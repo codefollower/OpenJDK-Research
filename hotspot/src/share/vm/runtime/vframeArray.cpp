@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -43,6 +43,7 @@
 #include "opto/runtime.hpp"
 #endif
 
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 int vframeArrayElement:: bci(void) const { return (_bci == SynchronizationEntryBCI ? 0 : _bci); }
 
@@ -55,7 +56,7 @@ void vframeArrayElement::free_monitors(JavaThread* jt) {
   }
 }
 
-void vframeArrayElement::fill_in(compiledVFrame* vf) {
+void vframeArrayElement::fill_in(compiledVFrame* vf, bool realloc_failures) {
 
 // Copy the information from the compiled vframe to the
 // interpreter frame we will be creating to replace vf
@@ -63,6 +64,9 @@ void vframeArrayElement::fill_in(compiledVFrame* vf) {
   _method = vf->method();
   _bci    = vf->raw_bci();
   _reexecute = vf->should_reexecute();
+#ifdef ASSERT
+  _removed_monitors = false;
+#endif
 
   int index;
 
@@ -80,11 +84,15 @@ void vframeArrayElement::fill_in(compiledVFrame* vf) {
     // Migrate the BasicLocks from the stack to the monitor chunk
     for (index = 0; index < list->length(); index++) {
       MonitorInfo* monitor = list->at(index);
-      assert(!monitor->owner_is_scalar_replaced(), "object should be reallocated already");
-      assert(monitor->owner() == NULL || (!monitor->owner()->is_unlocked() && !monitor->owner()->has_bias_pattern()), "object must be null or locked, and unbiased");
+      assert(!monitor->owner_is_scalar_replaced() || realloc_failures, "object should be reallocated already");
       BasicObjectLock* dest = _monitors->at(index);
-      dest->set_obj(monitor->owner());
-      monitor->lock()->move_to(monitor->owner(), dest->lock());
+      if (monitor->owner_is_scalar_replaced()) {
+        dest->set_obj(NULL);
+      } else {
+        assert(monitor->owner() == NULL || (!monitor->owner()->is_unlocked() && !monitor->owner()->has_bias_pattern()), "object must be null or locked, and unbiased");
+        dest->set_obj(monitor->owner());
+        monitor->lock()->move_to(monitor->owner(), dest->lock());
+      }
     }
   }
 
@@ -109,7 +117,7 @@ void vframeArrayElement::fill_in(compiledVFrame* vf) {
     StackValue* value = locs->at(index);
     switch(value->type()) {
       case T_OBJECT:
-        assert(!value->obj_is_scalar_replaced(), "object should be reallocated already");
+        assert(!value->obj_is_scalar_replaced() || realloc_failures, "object should be reallocated already");
         // preserve object type
         _locals->add( new StackValue(cast_from_oop<intptr_t>((value->get_obj()())), T_OBJECT ));
         break;
@@ -134,7 +142,7 @@ void vframeArrayElement::fill_in(compiledVFrame* vf) {
     StackValue* value = exprs->at(index);
     switch(value->type()) {
       case T_OBJECT:
-        assert(!value->obj_is_scalar_replaced(), "object should be reallocated already");
+        assert(!value->obj_is_scalar_replaced() || realloc_failures, "object should be reallocated already");
         // preserve object type
         _expressions->add( new StackValue(cast_from_oop<intptr_t>((value->get_obj()())), T_OBJECT ));
         break;
@@ -285,7 +293,7 @@ void vframeArrayElement::unpack_on_stack(int caller_actual_parameters,
 
   _frame.patch_pc(thread, pc);
 
-  assert (!method()->is_synchronized() || locks > 0, "synchronized methods must have monitors");
+  assert (!method()->is_synchronized() || locks > 0 || _removed_monitors, "synchronized methods must have monitors");
 
   BasicObjectLock* top = iframe()->interpreter_frame_monitor_begin();
   for (int index = 0; index < locks; index++) {
@@ -418,30 +426,27 @@ void vframeArrayElement::unpack_on_stack(int caller_actual_parameters,
 
 }
 
-int vframeArrayElement::on_stack_size(int caller_actual_parameters,
-                                      int callee_parameters,
+int vframeArrayElement::on_stack_size(int callee_parameters,
                                       int callee_locals,
                                       bool is_top_frame,
-                                      bool is_bottom_frame,
                                       int popframe_extra_stack_expression_els) const {
   assert(method()->max_locals() == locals()->size(), "just checking");
   int locks = monitors() == NULL ? 0 : monitors()->number_of_monitors();
   int temps = expressions()->size();
-  return Interpreter::size_activation(method(),
+  return Interpreter::size_activation(method()->max_stack(),
                                       temps + callee_parameters,
                                       popframe_extra_stack_expression_els,
                                       locks,
-                                      caller_actual_parameters,
                                       callee_parameters,
                                       callee_locals,
-                                      is_top_frame,
-                                      is_bottom_frame);
+                                      is_top_frame);
 }
 
 
 
 vframeArray* vframeArray::allocate(JavaThread* thread, int frame_size, GrowableArray<compiledVFrame*>* chunk,
-                                   RegisterMap *reg_map, frame sender, frame caller, frame self) {
+                                   RegisterMap *reg_map, frame sender, frame caller, frame self,
+                                   bool realloc_failures) {
 
   // Allocate the vframeArray
   vframeArray * result = (vframeArray*) AllocateHeap(sizeof(vframeArray) + // fixed part
@@ -453,19 +458,20 @@ vframeArray* vframeArray::allocate(JavaThread* thread, int frame_size, GrowableA
   result->_caller = caller;
   result->_original = self;
   result->set_unroll_block(NULL); // initialize it
-  result->fill_in(thread, frame_size, chunk, reg_map);
+  result->fill_in(thread, frame_size, chunk, reg_map, realloc_failures);
   return result;
 }
 
 void vframeArray::fill_in(JavaThread* thread,
                           int frame_size,
                           GrowableArray<compiledVFrame*>* chunk,
-                          const RegisterMap *reg_map) {
+                          const RegisterMap *reg_map,
+                          bool realloc_failures) {
   // Set owner first, it is used when adding monitor chunks
 
   _frame_size = frame_size;
   for(int i = 0; i < chunk->length(); i++) {
-    element(i)->fill_in(chunk->at(i));
+    element(i)->fill_in(chunk->at(i), realloc_failures);
   }
 
   // Copy registers for callee-saved registers

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -52,11 +52,11 @@
 #include "runtime/memprofiler.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/statSampler.hpp"
+#include "runtime/sweeper.hpp"
 #include "runtime/task.hpp"
 #include "runtime/thread.inline.hpp"
 #include "runtime/timer.hpp"
 #include "runtime/vm_operations.hpp"
-#include "services/memReporter.hpp"
 #include "services/memTracker.hpp"
 #include "trace/tracing.hpp"
 #include "utilities/dtrace.hpp"
@@ -112,6 +112,7 @@ void collect_invoked_methods(Method* m) {
   }
 }
 
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 GrowableArray<Method*>* collected_profiled_methods;
 
@@ -217,9 +218,7 @@ AllocStats alloc_stats;
 
 
 // General statistics printing (profiling ...)
-
 void print_statistics() {
-
 #ifdef ASSERT
 
   if (CountRuntimeCalls) {
@@ -269,7 +268,7 @@ void print_statistics() {
     os::print_statistics();
   }
 
-  if (PrintLockStatistics || PrintPreciseBiasedLockingStatistics) {
+  if (PrintLockStatistics || PrintPreciseBiasedLockingStatistics || PrintPreciseRTMLockingStatistics) {
     OptoRuntime::print_named_counters();
   }
 
@@ -313,6 +312,10 @@ void print_statistics() {
   if (PrintCodeCache) {
     MutexLockerEx mu(CodeCache_lock, Mutex::_no_safepoint_check_flag);
     CodeCache::print();
+  }
+
+  if (PrintMethodFlushingStatistics) {
+    NMethodSweeper::print();
   }
 
   if (PrintCodeCache2) {
@@ -360,12 +363,7 @@ void print_statistics() {
 #endif // ENABLE_ZAP_DEAD_LOCALS
   // Native memory tracking data
   if (PrintNMTStatistics) {
-    if (MemTracker::is_on()) {
-      BaselineTTYOutputer outputer(tty);
-      MemTracker::print_memory_usage(outputer, K, false);
-    } else {
-      tty->print_cr(MemTracker::reason());
-    }
+    MemTracker::final_report(tty);
   }
 }
 
@@ -382,8 +380,12 @@ void print_statistics() {
     CodeCache::print();
   }
 
+  if (PrintMethodFlushingStatistics) {
+    NMethodSweeper::print();
+  }
+
 #ifdef COMPILER2
-  if (PrintPreciseBiasedLockingStatistics) {
+  if (PrintPreciseBiasedLockingStatistics || PrintPreciseRTMLockingStatistics) {
     OptoRuntime::print_named_counters();
   }
 #endif
@@ -393,12 +395,7 @@ void print_statistics() {
 
   // Native memory tracking data
   if (PrintNMTStatistics) {
-    if (MemTracker::is_on()) {
-      BaselineTTYOutputer outputer(tty);
-      MemTracker::print_memory_usage(outputer, K, false);
-    } else {
-      tty->print_cr(MemTracker::reason());
-    }
+    MemTracker::final_report(tty);
   }
 }
 
@@ -503,10 +500,8 @@ void before_exit(JavaThread * thread) {
   StatSampler::disengage();
   StatSampler::destroy();
 
-  // We do not need to explicitly stop concurrent GC threads because the
-  // JVM will be taken down at a safepoint when such threads are inactive --
-  // except for some concurrent G1 threads, see (comment in)
-  // Threads::destroy_vm().
+  // Stop concurrent GC threads
+  Universe::heap()->stop();
 
   // Print GC/heap related information.
   if (PrintGCDetails) {
@@ -548,10 +543,6 @@ void before_exit(JavaThread * thread) {
     _before_exit_status = BEFORE_EXIT_DONE;
     BeforeExit_lock->notify_all();
   }
-
-  // Shutdown NMT before exit. Otherwise,
-  // it will run into trouble when system destroys static variables.
-  MemTracker::shutdown(MemTracker::NMT_normal);
 
   if (VerifyStringTableAtExit) {
     int fail_cnt = 0;
@@ -708,8 +699,6 @@ void JDK_Version::initialize() {
   assert(!_current.is_valid(), "Don't initialize twice");
 
   void *lib_handle = os::native_java_library();
-  //JDK_GetVersionInfo0在jdk\src\share\native\common\jdk_util.c中实现
-  //被编译进D:\JavaSE1.8\jre\bin\java.dll
   jdk_version_info_fn_t func = CAST_TO_FN_PTR(jdk_version_info_fn_t,
      os::dll_lookup(lib_handle, "JDK_GetVersionInfo0"));
 

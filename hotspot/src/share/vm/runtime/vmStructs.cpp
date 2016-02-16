@@ -142,6 +142,9 @@
 #ifdef TARGET_OS_ARCH_linux_ppc
 # include "vmStructs_linux_ppc.hpp"
 #endif
+#ifdef TARGET_OS_ARCH_aix_ppc
+# include "vmStructs_aix_ppc.hpp"
+#endif
 #ifdef TARGET_OS_ARCH_bsd_x86
 # include "vmStructs_bsd_x86.hpp"
 #endif
@@ -198,10 +201,13 @@
 #ifdef TARGET_ARCH_MODEL_arm
 # include "adfiles/adGlobals_arm.hpp"
 #endif
-#ifdef TARGET_ARCH_MODEL_ppc
-# include "adfiles/adGlobals_ppc.hpp"
+#ifdef TARGET_ARCH_MODEL_ppc_32
+# include "adfiles/adGlobals_ppc_32.hpp"
 #endif
+#ifdef TARGET_ARCH_MODEL_ppc_64
+# include "adfiles/adGlobals_ppc_64.hpp"
 #endif
+#endif // COMPILER2
 
 // Note: the cross-product of (c1, c2, product, nonproduct, ...),
 // (nonstatic, static), and (unchecked, checked) has not been taken.
@@ -242,7 +248,7 @@ typedef TwoOopHashtable<Klass*, mtClass>      KlassTwoOopHashtable;
 typedef Hashtable<Klass*, mtClass>            KlassHashtable;
 typedef HashtableEntry<Klass*, mtClass>       KlassHashtableEntry;
 typedef TwoOopHashtable<Symbol*, mtClass>     SymbolTwoOopHashtable;
-typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
+typedef BinaryTreeDictionary<Metablock, FreeList<Metablock> > MetablockTreeDictionary;
 
 //--------------------------------------------------------------------------------
 // VM_STRUCTS
@@ -314,7 +320,7 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   nonstatic_field(InstanceKlass,               _jni_ids,                                      JNIid*)                                \
   nonstatic_field(InstanceKlass,               _osr_nmethods_head,                            nmethod*)                              \
   nonstatic_field(InstanceKlass,               _breakpoints,                                  BreakpointInfo*)                       \
-  nonstatic_field(InstanceKlass,               _generic_signature_index,                           u2)                               \
+  nonstatic_field(InstanceKlass,               _generic_signature_index,                      u2)                                    \
   nonstatic_field(InstanceKlass,               _methods_jmethod_ids,                          jmethodID*)                            \
   volatile_nonstatic_field(InstanceKlass,      _idnum_allocated_count,                        u2)                                    \
   nonstatic_field(InstanceKlass,               _annotations,                                  Annotations*)                          \
@@ -659,11 +665,13 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
       static_field(SystemDictionary,            WK_KLASS(StackOverflowError_klass),            Klass*)                               \
       static_field(SystemDictionary,            WK_KLASS(ProtectionDomain_klass),              Klass*)                               \
       static_field(SystemDictionary,            WK_KLASS(AccessControlContext_klass),          Klass*)                               \
+      static_field(SystemDictionary,            WK_KLASS(SecureClassLoader_klass),             Klass*)                               \
       static_field(SystemDictionary,            WK_KLASS(Reference_klass),                     Klass*)                               \
       static_field(SystemDictionary,            WK_KLASS(SoftReference_klass),                 Klass*)                               \
       static_field(SystemDictionary,            WK_KLASS(WeakReference_klass),                 Klass*)                               \
       static_field(SystemDictionary,            WK_KLASS(FinalReference_klass),                Klass*)                               \
       static_field(SystemDictionary,            WK_KLASS(PhantomReference_klass),              Klass*)                               \
+      static_field(SystemDictionary,            WK_KLASS(Cleaner_klass),                       Klass*)                               \
       static_field(SystemDictionary,            WK_KLASS(Finalizer_klass),                     Klass*)                               \
       static_field(SystemDictionary,            WK_KLASS(Thread_klass),                        Klass*)                               \
       static_field(SystemDictionary,            WK_KLASS(ThreadGroup_klass),                   Klass*)                               \
@@ -807,6 +815,7 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
      static_field(StubRoutines,                _cipherBlockChaining_decryptAESCrypt,          address)                               \
      static_field(StubRoutines,                _updateBytesCRC32,                             address)                               \
      static_field(StubRoutines,                _crc_table_adr,                                address)                               \
+     static_field(StubRoutines,                _multiplyToLen,                                address)                               \
                                                                                                                                      \
   /*****************/                                                                                                                \
   /* SharedRuntime */                                                                                                                \
@@ -1814,6 +1823,8 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   declare_c2_type(MemBarNode, MultiNode)                                  \
   declare_c2_type(MemBarAcquireNode, MemBarNode)                          \
   declare_c2_type(MemBarReleaseNode, MemBarNode)                          \
+  declare_c2_type(LoadFenceNode, MemBarNode)                              \
+  declare_c2_type(StoreFenceNode, MemBarNode)                             \
   declare_c2_type(MemBarVolatileNode, MemBarNode)                         \
   declare_c2_type(MemBarCPUOrderNode, MemBarNode)                         \
   declare_c2_type(InitializeNode, MemBarNode)                             \
@@ -1938,15 +1949,6 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   declare_c2_type(CmpF3Node, CmpFNode)                                    \
   declare_c2_type(CmpDNode, CmpNode)                                      \
   declare_c2_type(CmpD3Node, CmpDNode)                                    \
-  declare_c2_type(MathExactNode, MultiNode)                               \
-  declare_c2_type(MathExactINode, MathExactNode)                          \
-  declare_c2_type(AddExactINode, MathExactINode)                          \
-  declare_c2_type(AddExactLNode, MathExactLNode)                          \
-  declare_c2_type(SubExactINode, MathExactINode)                          \
-  declare_c2_type(SubExactLNode, MathExactLNode)                          \
-  declare_c2_type(NegExactINode, MathExactINode)                          \
-  declare_c2_type(MulExactINode, MathExactINode)                          \
-  declare_c2_type(FlagsProjNode, ProjNode)                                \
   declare_c2_type(BoolNode, Node)                                         \
   declare_c2_type(AbsNode, Node)                                          \
   declare_c2_type(AbsINode, AbsNode)                                      \
@@ -2027,6 +2029,15 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   declare_c2_type(ExtractLNode, ExtractNode)                              \
   declare_c2_type(ExtractFNode, ExtractNode)                              \
   declare_c2_type(ExtractDNode, ExtractNode)                              \
+  declare_c2_type(OverflowNode, CmpNode)                                  \
+  declare_c2_type(OverflowINode, OverflowNode)                            \
+  declare_c2_type(OverflowAddINode, OverflowINode)                        \
+  declare_c2_type(OverflowSubINode, OverflowINode)                        \
+  declare_c2_type(OverflowMulINode, OverflowINode)                        \
+  declare_c2_type(OverflowLNode, OverflowNode)                            \
+  declare_c2_type(OverflowAddLNode, OverflowLNode)                        \
+  declare_c2_type(OverflowSubLNode, OverflowLNode)                        \
+  declare_c2_type(OverflowMulLNode, OverflowLNode)                        \
                                                                           \
   /*********************/                                                 \
   /* Adapter Blob Entries */                                              \
@@ -2486,6 +2497,7 @@ typedef BinaryTreeDictionary<Metablock, FreeList> MetablockTreeDictionary;
   declare_constant(Deoptimization::Reason_age)                            \
   declare_constant(Deoptimization::Reason_predicate)                      \
   declare_constant(Deoptimization::Reason_loop_limit_check)               \
+  declare_constant(Deoptimization::Reason_unstable_if)                    \
   declare_constant(Deoptimization::Reason_LIMIT)                          \
   declare_constant(Deoptimization::Reason_RECORDED_LIMIT)                 \
                                                                           \

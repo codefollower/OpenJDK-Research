@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -32,6 +32,7 @@
 #include "oops/oop.inline.hpp"
 #include "runtime/handles.hpp"
 #include "runtime/handles.inline.hpp"
+#include "runtime/thread.inline.hpp"
 #include "utilities/copy.hpp"
 
 
@@ -406,56 +407,66 @@ void Dependencies::check_valid_dependency_type(DepType dept) {
 // for the sake of the compiler log, print out current dependencies:
 void Dependencies::log_all_dependencies() {
   if (log() == NULL)  return;
-  ciBaseObject* args[max_arg_count];
+  ResourceMark rm;
   for (int deptv = (int)FIRST_TYPE; deptv < (int)TYPE_LIMIT; deptv++) {
     DepType dept = (DepType)deptv;
     GrowableArray<ciBaseObject*>* deps = _deps[dept];
-    if (deps->length() == 0)  continue;
+    int deplen = deps->length();
+    if (deplen == 0) {
+      continue;
+    }
     int stride = dep_args(dept);
+    GrowableArray<ciBaseObject*>* ciargs = new GrowableArray<ciBaseObject*>(stride);
     for (int i = 0; i < deps->length(); i += stride) {
       for (int j = 0; j < stride; j++) {
         // flush out the identities before printing
-        args[j] = deps->at(i+j);
+        ciargs->push(deps->at(i+j));
       }
-      write_dependency_to(log(), dept, stride, args);
+      write_dependency_to(log(), dept, ciargs);
+      ciargs->clear();
     }
+    guarantee(deplen == deps->length(), "deps array cannot grow inside nested ResoureMark scope");
   }
 }
 
 void Dependencies::write_dependency_to(CompileLog* log,
                                        DepType dept,
-                                       int nargs, DepArgument args[],
+                                       GrowableArray<DepArgument>* args,
                                        Klass* witness) {
   if (log == NULL) {
     return;
   }
+  ResourceMark rm;
   ciEnv* env = ciEnv::current();
-  ciBaseObject* ciargs[max_arg_count];
-  assert(nargs <= max_arg_count, "oob");
-  for (int j = 0; j < nargs; j++) {
-    if (args[j].is_oop()) {
-      ciargs[j] = env->get_object(args[j].oop_value());
+  GrowableArray<ciBaseObject*>* ciargs = new GrowableArray<ciBaseObject*>(args->length());
+  for (GrowableArrayIterator<DepArgument> it = args->begin(); it != args->end(); ++it) {
+    DepArgument arg = *it;
+    if (arg.is_oop()) {
+      ciargs->push(env->get_object(arg.oop_value()));
     } else {
-      ciargs[j] = env->get_metadata(args[j].metadata_value());
+      ciargs->push(env->get_metadata(arg.metadata_value()));
     }
   }
-  Dependencies::write_dependency_to(log, dept, nargs, ciargs, witness);
+  int argslen = ciargs->length();
+  Dependencies::write_dependency_to(log, dept, ciargs, witness);
+  guarantee(argslen == ciargs->length(), "ciargs array cannot grow inside nested ResoureMark scope");
 }
 
 void Dependencies::write_dependency_to(CompileLog* log,
                                        DepType dept,
-                                       int nargs, ciBaseObject* args[],
+                                       GrowableArray<ciBaseObject*>* args,
                                        Klass* witness) {
-  if (log == NULL)  return;
-  assert(nargs <= max_arg_count, "oob");
-  int argids[max_arg_count];
-  int ctxkj = dep_context_arg(dept);  // -1 if no context arg
-  int j;
-  for (j = 0; j < nargs; j++) {
-    if (args[j]->is_object()) {
-      argids[j] = log->identify(args[j]->as_object());
+  if (log == NULL) {
+    return;
+  }
+  ResourceMark rm;
+  GrowableArray<int>* argids = new GrowableArray<int>(args->length());
+  for (GrowableArrayIterator<ciBaseObject*> it = args->begin(); it != args->end(); ++it) {
+    ciBaseObject* obj = *it;
+    if (obj->is_object()) {
+      argids->push(log->identify(obj->as_object()));
     } else {
-      argids[j] = log->identify(args[j]->as_metadata());
+      argids->push(log->identify(obj->as_metadata()));
     }
   }
   if (witness != NULL) {
@@ -464,16 +475,17 @@ void Dependencies::write_dependency_to(CompileLog* log,
     log->begin_elem("dependency");
   }
   log->print(" type='%s'", dep_name(dept));
-  if (ctxkj >= 0) {
-    log->print(" ctxk='%d'", argids[ctxkj]);
+  const int ctxkj = dep_context_arg(dept);  // -1 if no context arg
+  if (ctxkj >= 0 && ctxkj < argids->length()) {
+    log->print(" ctxk='%d'", argids->at(ctxkj));
   }
   // write remaining arguments, if any.
-  for (j = 0; j < nargs; j++) {
+  for (int j = 0; j < argids->length(); j++) {
     if (j == ctxkj)  continue;  // already logged
     if (j == 1) {
-      log->print(  " x='%d'",    argids[j]);
+      log->print(  " x='%d'",    argids->at(j));
     } else {
-      log->print(" x%d='%d'", j, argids[j]);
+      log->print(" x%d='%d'", j, argids->at(j));
     }
   }
   if (witness != NULL) {
@@ -485,9 +497,12 @@ void Dependencies::write_dependency_to(CompileLog* log,
 
 void Dependencies::write_dependency_to(xmlStream* xtty,
                                        DepType dept,
-                                       int nargs, DepArgument args[],
+                                       GrowableArray<DepArgument>* args,
                                        Klass* witness) {
-  if (xtty == NULL)  return;
+  if (xtty == NULL) {
+    return;
+  }
+  ResourceMark rm;
   ttyLocker ttyl;
   int ctxkj = dep_context_arg(dept);  // -1 if no context arg
   if (witness != NULL) {
@@ -497,23 +512,24 @@ void Dependencies::write_dependency_to(xmlStream* xtty,
   }
   xtty->print(" type='%s'", dep_name(dept));
   if (ctxkj >= 0) {
-    xtty->object("ctxk", args[ctxkj].metadata_value());
+    xtty->object("ctxk", args->at(ctxkj).metadata_value());
   }
   // write remaining arguments, if any.
-  for (int j = 0; j < nargs; j++) {
+  for (int j = 0; j < args->length(); j++) {
     if (j == ctxkj)  continue;  // already logged
+    DepArgument arg = args->at(j);
     if (j == 1) {
-      if (args[j].is_oop()) {
-        xtty->object("x", args[j].oop_value());
+      if (arg.is_oop()) {
+        xtty->object("x", arg.oop_value());
       } else {
-        xtty->object("x", args[j].metadata_value());
+        xtty->object("x", arg.metadata_value());
       }
     } else {
       char xn[10]; sprintf(xn, "x%d", j);
-      if (args[j].is_oop()) {
-        xtty->object(xn, args[j].oop_value());
+      if (arg.is_oop()) {
+        xtty->object(xn, arg.oop_value());
       } else {
-        xtty->object(xn, args[j].metadata_value());
+        xtty->object(xn, arg.metadata_value());
       }
     }
   }
@@ -524,7 +540,7 @@ void Dependencies::write_dependency_to(xmlStream* xtty,
   xtty->end_elem();
 }
 
-void Dependencies::print_dependency(DepType dept, int nargs, DepArgument args[],
+void Dependencies::print_dependency(DepType dept, GrowableArray<DepArgument>* args,
                                     Klass* witness) {
   ResourceMark rm;
   ttyLocker ttyl;   // keep the following output all in one block
@@ -533,8 +549,8 @@ void Dependencies::print_dependency(DepType dept, int nargs, DepArgument args[],
                 dep_name(dept));
   // print arguments
   int ctxkj = dep_context_arg(dept);  // -1 if no context arg
-  for (int j = 0; j < nargs; j++) {
-    DepArgument arg = args[j];
+  for (int j = 0; j < args->length(); j++) {
+    DepArgument arg = args->at(j);
     bool put_star = false;
     if (arg.is_null())  continue;
     const char* what;
@@ -544,7 +560,7 @@ void Dependencies::print_dependency(DepType dept, int nargs, DepArgument args[],
       put_star = !Dependencies::is_concrete_klass((Klass*)arg.metadata_value());
     } else if (arg.is_method()) {
       what = "method ";
-      put_star = !Dependencies::is_concrete_method((Method*)arg.metadata_value());
+      put_star = !Dependencies::is_concrete_method((Method*)arg.metadata_value(), NULL);
     } else if (arg.is_klass()) {
       what = "class  ";
     } else {
@@ -570,31 +586,33 @@ void Dependencies::print_dependency(DepType dept, int nargs, DepArgument args[],
 void Dependencies::DepStream::log_dependency(Klass* witness) {
   if (_deps == NULL && xtty == NULL)  return;  // fast cutout for runtime
   ResourceMark rm;
-  int nargs = argument_count();
-  DepArgument args[max_arg_count];
+  const int nargs = argument_count();
+  GrowableArray<DepArgument>* args = new GrowableArray<DepArgument>(nargs);
   for (int j = 0; j < nargs; j++) {
     if (type() == call_site_target_value) {
-      args[j] = argument_oop(j);
+      args->push(argument_oop(j));
     } else {
-      args[j] = argument(j);
+      args->push(argument(j));
     }
   }
+  int argslen = args->length();
   if (_deps != NULL && _deps->log() != NULL) {
-    Dependencies::write_dependency_to(_deps->log(),
-                                      type(), nargs, args, witness);
+    Dependencies::write_dependency_to(_deps->log(), type(), args, witness);
   } else {
-    Dependencies::write_dependency_to(xtty,
-                                      type(), nargs, args, witness);
+    Dependencies::write_dependency_to(xtty, type(), args, witness);
   }
+  guarantee(argslen == args->length(), "args array cannot grow inside nested ResoureMark scope");
 }
 
 void Dependencies::DepStream::print_dependency(Klass* witness, bool verbose) {
+  ResourceMark rm;
   int nargs = argument_count();
-  DepArgument args[max_arg_count];
+  GrowableArray<DepArgument>* args = new GrowableArray<DepArgument>(nargs);
   for (int j = 0; j < nargs; j++) {
-    args[j] = argument(j);
+    args->push(argument(j));
   }
-  Dependencies::print_dependency(type(), nargs, args, witness);
+  int argslen = args->length();
+  Dependencies::print_dependency(type(), args, witness);
   if (verbose) {
     if (_code != NULL) {
       tty->print("  code: ");
@@ -602,6 +620,7 @@ void Dependencies::DepStream::print_dependency(Klass* witness, bool verbose) {
       tty->cr();
     }
   }
+  guarantee(argslen == args->length(), "args array cannot grow inside nested ResoureMark scope");
 }
 
 
@@ -655,8 +674,6 @@ inline Metadata* Dependencies::DepStream::recorded_metadata_at(int i) {
   } else {
     o = _deps->oop_recorder()->metadata_at(i);
   }
-  assert(o == NULL || o->is_metaspace_object(),
-         err_msg("Should be metadata " PTR_FORMAT, o));
   return o;
 }
 
@@ -828,8 +845,8 @@ class ClassHierarchyWalker {
         // Static methods don't override non-static so punt
         return true;
       }
-      if (   !Dependencies::is_concrete_method(lm)
-          && !Dependencies::is_concrete_method(m)
+      if (   !Dependencies::is_concrete_method(lm, k)
+          && !Dependencies::is_concrete_method(m, ctxk)
           && lm->method_holder()->is_subtype_of(m->method_holder()))
         // Method m is overridden by lm, but both are non-concrete.
         return true;
@@ -862,9 +879,20 @@ class ClassHierarchyWalker {
   bool is_witness(Klass* k) {
     if (doing_subtype_search()) {
       return Dependencies::is_concrete_klass(k);
+    } else if (!k->oop_is_instance()) {
+      return false; // no methods to find in an array type
     } else {
-      Method* m = InstanceKlass::cast(k)->find_method(_name, _signature);
-      if (m == NULL || !Dependencies::is_concrete_method(m))  return false;
+      // Search class hierarchy first.
+      Method* m = InstanceKlass::cast(k)->find_instance_method(_name, _signature);
+      if (!Dependencies::is_concrete_method(m, k)) {
+        // Check interface defaults also, if any exist.
+        Array<Method*>* default_methods = InstanceKlass::cast(k)->default_methods();
+        if (default_methods == NULL)
+            return false;
+        m = InstanceKlass::cast(k)->find_method(default_methods, _name, _signature);
+        if (!Dependencies::is_concrete_method(m, NULL))
+            return false;
+      }
       _found_methods[_num_participants] = m;
       // Note:  If add_participant(k) is called,
       // the method m will already be memoized for it.
@@ -1068,7 +1096,7 @@ Klass* ClassHierarchyWalker::find_witness_anywhere(Klass* context_type,
   Klass* chain;       // scratch variable
 #define ADD_SUBCLASS_CHAIN(k)                     {  \
     assert(chaini < CHAINMAX, "oob");                \
-    chain = InstanceKlass::cast(k)->subklass();      \
+    chain = k->subklass();                           \
     if (chain != NULL)  chains[chaini++] = chain;    }
 
   // Look for non-abstract subclasses.
@@ -1079,35 +1107,37 @@ Klass* ClassHierarchyWalker::find_witness_anywhere(Klass* context_type,
   // (Their subclasses are additional indirect implementors.
   // See InstanceKlass::add_implementor.)
   // (Note:  nof_implementors is always zero for non-interfaces.)
-  int nof_impls = InstanceKlass::cast(context_type)->nof_implementors();
-  if (nof_impls > 1) {
-    // Avoid this case: *I.m > { A.m, C }; B.m > C
-    // Here, I.m has 2 concrete implementations, but m appears unique
-    // as A.m, because the search misses B.m when checking C.
-    // The inherited method B.m was getting missed by the walker
-    // when interface 'I' was the starting point.
-    // %%% Until this is fixed more systematically, bail out.
-    // (Old CHA had the same limitation.)
-    return context_type;
-  }
-  if (nof_impls > 0) {
-    Klass* impl = InstanceKlass::cast(context_type)->implementor();
-    assert(impl != NULL, "just checking");
-    // If impl is the same as the context_type, then more than one
-    // implementor has seen. No exact info in this case.
-    if (impl == context_type) {
-      return context_type;  // report an inexact witness to this sad affair
+  if (top_level_call) {
+    int nof_impls = InstanceKlass::cast(context_type)->nof_implementors();
+    if (nof_impls > 1) {
+      // Avoid this case: *I.m > { A.m, C }; B.m > C
+      // Here, I.m has 2 concrete implementations, but m appears unique
+      // as A.m, because the search misses B.m when checking C.
+      // The inherited method B.m was getting missed by the walker
+      // when interface 'I' was the starting point.
+      // %%% Until this is fixed more systematically, bail out.
+      // (Old CHA had the same limitation.)
+      return context_type;
     }
-    if (do_counts)
-      { NOT_PRODUCT(deps_find_witness_steps++); }
-    if (is_participant(impl)) {
-      if (!participants_hide_witnesses) {
+    if (nof_impls > 0) {
+      Klass* impl = InstanceKlass::cast(context_type)->implementor();
+      assert(impl != NULL, "just checking");
+      // If impl is the same as the context_type, then more than one
+      // implementor has seen. No exact info in this case.
+      if (impl == context_type) {
+        return context_type;  // report an inexact witness to this sad affair
+      }
+      if (do_counts)
+        { NOT_PRODUCT(deps_find_witness_steps++); }
+      if (is_participant(impl)) {
+        if (!participants_hide_witnesses) {
+          ADD_SUBCLASS_CHAIN(impl);
+        }
+      } else if (is_witness(impl) && !ignore_witness(impl)) {
+        return impl;
+      } else {
         ADD_SUBCLASS_CHAIN(impl);
       }
-    } else if (is_witness(impl) && !ignore_witness(impl)) {
-      return impl;
-    } else {
-      ADD_SUBCLASS_CHAIN(impl);
     }
   }
 
@@ -1155,15 +1185,17 @@ bool Dependencies::is_concrete_klass(Klass* k) {
   return true;
 }
 
-bool Dependencies::is_concrete_method(Method* m) {
-  // Statics are irrelevant to virtual call sites.
-  if (m->is_static())  return false;
-
-  // We could also return false if m does not yet appear to be
-  // executed, if the VM version supports this distinction also.
-  // Default methods are considered "concrete" as well.
-  return !m->is_abstract() &&
-         !m->is_overpass(); // error functions aren't concrete
+bool Dependencies::is_concrete_method(Method* m, Klass * k) {
+  // NULL is not a concrete method,
+  // statics are irrelevant to virtual call sites,
+  // abstract methods are not concrete,
+  // overpass (error) methods are not concrete if k is abstract
+  //
+  // note "true" is conservative answer --
+  //     overpass clause is false if k == NULL, implies return true if
+  //     answer depends on overpass clause.
+  return ! ( m == NULL || m -> is_static() || m -> is_abstract() ||
+             m->is_overpass() && k != NULL && k -> is_abstract() );
 }
 
 
@@ -1187,16 +1219,6 @@ bool Dependencies::is_concrete_klass(ciInstanceKlass* k) {
   //if (k->is_not_instantiated())  return false;
   return true;
 }
-
-bool Dependencies::is_concrete_method(ciMethod* m) {
-  // Statics are irrelevant to virtual call sites.
-  if (m->is_static())  return false;
-
-  // We could also return false if m does not yet appear to be
-  // executed, if the VM version supports this distinction also.
-  return !m->is_abstract();
-}
-
 
 bool Dependencies::has_finalizable_subclass(ciInstanceKlass* k) {
   return k->has_finalizable_subclass();
@@ -1411,7 +1433,7 @@ Method* Dependencies::find_unique_concrete_method(Klass* ctxk, Method* m) {
   Klass* wit = wf.find_witness_definer(ctxk);
   if (wit != NULL)  return NULL;  // Too many witnesses.
   Method* fm = wf.found_method(0);  // Will be NULL if num_parts == 0.
-  if (Dependencies::is_concrete_method(m)) {
+  if (Dependencies::is_concrete_method(m, ctxk)) {
     if (fm == NULL) {
       // It turns out that m was always the only implementation.
       fm = m;
@@ -1441,68 +1463,12 @@ Klass* Dependencies::check_exclusive_concrete_methods(Klass* ctxk,
   return wf.find_witness_definer(ctxk, changes);
 }
 
-// Find the set of all non-abstract methods under ctxk that match m[0].
-// (The method m[0] must be defined or inherited in ctxk.)
-// Include m itself in the set, unless it is abstract.
-// Fill the given array m[0..(mlen-1)] with this set, and return the length.
-// (The length may be zero if no concrete methods are found anywhere.)
-// If there are too many concrete methods to fit in marray, return -1.
-int Dependencies::find_exclusive_concrete_methods(Klass* ctxk,
-                                                  int mlen,
-                                                  Method* marray[]) {
-  Method* m0 = marray[0];
-  ClassHierarchyWalker wf(m0);
-  assert(wf.check_method_context(ctxk, m0), "proper context");
-  wf.record_witnesses(mlen);
-  bool participants_hide_witnesses = true;
-  Klass* wit = wf.find_witness_definer(ctxk);
-  if (wit != NULL)  return -1;  // Too many witnesses.
-  int num = wf.num_participants();
-  assert(num <= mlen, "oob");
-  // Keep track of whether m is also part of the result set.
-  int mfill = 0;
-  assert(marray[mfill] == m0, "sanity");
-  if (Dependencies::is_concrete_method(m0))
-    mfill++;  // keep m0 as marray[0], the first result
-  for (int i = 0; i < num; i++) {
-    Method* fm = wf.found_method(i);
-    if (fm == m0)  continue;  // Already put this guy in the list.
-    if (mfill == mlen) {
-      return -1;              // Oops.  Too many methods after all!
-    }
-    marray[mfill++] = fm;
-  }
-#ifndef PRODUCT
-  // Make sure the dependency mechanism will pass this discovery:
-  if (VerifyDependencies) {
-    // Turn off dependency tracing while actually testing deps.
-    FlagSetting fs(TraceDependencies, false);
-    switch (mfill) {
-    case 1:
-      guarantee(NULL == (void *)check_unique_concrete_method(ctxk, marray[0]),
-                "verify dep.");
-      break;
-    case 2:
-      guarantee(NULL == (void *)
-                check_exclusive_concrete_methods(ctxk, marray[0], marray[1]),
-                "verify dep.");
-      break;
-    default:
-      ShouldNotReachHere();  // mlen > 2 yet supported
-    }
-  }
-#endif //PRODUCT
-  return mfill;
-}
-
-
 Klass* Dependencies::check_has_no_finalizable_subclasses(Klass* ctxk, KlassDepChange* changes) {
   Klass* search_at = ctxk;
   if (changes != NULL)
     search_at = changes->new_type(); // just look at the new bit
   return find_finalizable_subclass(search_at);
 }
-
 
 Klass* Dependencies::check_call_site_target_value(oop call_site, oop method_handle, CallSiteDepChange* changes) {
   assert(call_site    ->is_a(SystemDictionary::CallSite_klass()),     "sanity");

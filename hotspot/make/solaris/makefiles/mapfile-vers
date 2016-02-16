@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2000, 2013, Oracle and/or its affiliates. All rights reserved.
+# Copyright (c) 2000, 2014, Oracle and/or its affiliates. All rights reserved.
 # DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
 #
 # This code is free software; you can redistribute it and/or modify it
@@ -84,6 +84,7 @@ SUNWprivate_1.1 {
                 JVM_EnableCompiler;
                 JVM_Exit;
                 JVM_FillInStackTrace;
+                JVM_FindClassFromCaller;
                 JVM_FindClassFromClass;
                 JVM_FindClassFromClassLoader;
                 JVM_FindClassFromBootLoader;
@@ -163,6 +164,7 @@ SUNWprivate_1.1 {
                 JVM_GetStackTraceElement;
                 JVM_GetSystemPackage;
                 JVM_GetSystemPackages;
+                JVM_GetTemporaryDirectory;
                 JVM_GetThreadStateNames;
                 JVM_GetThreadStateValues;
                 JVM_GetVersionInfo;
@@ -187,6 +189,9 @@ SUNWprivate_1.1 {
                 JVM_IsSupportedJNIVersion;
                 JVM_IsThreadAlive;
                 JVM_IsVMGeneratedMethodIx;
+                JVM_KnownToNotExist;
+                JVM_GetResourceLookupCacheURLs;
+                JVM_GetResourceLookupCache;
                 JVM_LatestUserDefinedLoader;
                 JVM_Listen;
                 JVM_LoadClass0;

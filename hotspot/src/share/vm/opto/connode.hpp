@@ -36,7 +36,7 @@ class MachNode;
 // Simple constants
 class ConNode : public TypeNode {
 public:
-  ConNode( const Type *t ) : TypeNode(t,1) {
+  ConNode( const Type *t ) : TypeNode(t->remove_speculative(),1) {
     init_req(0, (Node*)Compile::current()->root());
     init_flags(Flag_is_Con);
   }
@@ -241,10 +241,25 @@ public:
 //------------------------------CastIINode-------------------------------------
 // cast integer to integer (different range)
 class CastIINode: public ConstraintCastNode {
+  private:
+  // Can this node be removed post CCP or does it carry a required dependency?
+  const bool _carry_dependency;
+
+  protected:
+  virtual uint cmp( const Node &n ) const;
+  virtual uint size_of() const;
+
 public:
-  CastIINode (Node *n, const Type *t ): ConstraintCastNode(n,t) {}
+  CastIINode(Node *n, const Type *t, bool carry_dependency = false)
+    : ConstraintCastNode(n,t), _carry_dependency(carry_dependency) {}
   virtual int Opcode() const;
   virtual uint ideal_reg() const { return Op_RegI; }
+  virtual Node *Identity( PhaseTransform *phase );
+  virtual const Type *Value( PhaseTransform *phase ) const;
+  virtual Node *Ideal_DU_postCCP( PhaseCCP * );
+#ifndef PRODUCT
+  virtual void dump_spec(outputStream *st) const;
+#endif
 };
 
 //------------------------------CastPPNode-------------------------------------
@@ -641,6 +656,19 @@ public:
   virtual int Opcode() const;
   virtual const Type *bottom_type() const { return TypeInt::INT; }
 };
+
+//------------------------------Opaque3Node------------------------------------
+// A node to prevent unwanted optimizations. Will be optimized only during
+// macro nodes expansion.
+class Opaque3Node : public Opaque2Node {
+  int _opt; // what optimization it was used for
+public:
+  enum { RTM_OPT };
+  Opaque3Node(Compile* C, Node *n, int opt) : Opaque2Node(C, n), _opt(opt) {}
+  virtual int Opcode() const;
+  bool rtm_opt() const { return (_opt == RTM_OPT); }
+};
+
 
 //----------------------PartialSubtypeCheckNode--------------------------------
 // The 2nd slow-half of a subtype check.  Scan the subklass's 2ndary superklass

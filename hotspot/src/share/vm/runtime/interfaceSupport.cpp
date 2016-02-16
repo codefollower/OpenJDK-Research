@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2011, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -30,10 +30,12 @@
 #include "memory/resourceArea.hpp"
 #include "runtime/init.hpp"
 #include "runtime/interfaceSupport.hpp"
+#include "runtime/orderAccess.inline.hpp"
 #include "runtime/threadLocalStorage.hpp"
 #include "runtime/vframe.hpp"
 #include "utilities/preserveException.hpp"
 
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 // Implementation of InterfaceSupport
 
@@ -83,7 +85,7 @@ void InterfaceSupport::gc_alot() {
   // Short-circuit any possible re-entrant gc-a-lot attempt
   if (thread->skip_gcalot()) return;
 
-  if (is_init_completed()) {
+  if (Threads::is_vm_complete()) {
 
     if (++_fullgc_alot_invocation < FullGCALotStart) {
       return;

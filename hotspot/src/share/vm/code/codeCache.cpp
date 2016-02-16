@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -81,10 +81,10 @@ class CodeBlob_sizes {
   bool is_empty()                                { return count == 0; }
 
   void print(const char* title) {
-    tty->print_cr(" #%d %s = %dK (hdr %d%%,  loc %d%%, code %d%%, stub %d%%, [oops %d%%, data %d%%, pcs %d%%])",
+    tty->print_cr(" #%d %s = %dK (hdr %d%%,  loc %d%%, code %d%%, stub %d%%, [oops %d%%, metadata %d%%, data %d%%, pcs %d%%])",
                   count,
                   title,
-                  total() / K,
+                  (int)(total() / K),
                   header_size             * 100 / total_size,
                   relocation_size         * 100 / total_size,
                   code_size               * 100 / total_size,
@@ -191,7 +191,7 @@ CodeBlob* CodeCache::allocate(int size, bool is_critical) {
     }
     if (PrintCodeCacheExtension) {
       ResourceMark rm;
-      tty->print_cr("code cache extended to [" INTPTR_FORMAT ", " INTPTR_FORMAT "] (%d bytes)",
+      tty->print_cr("code cache extended to [" INTPTR_FORMAT ", " INTPTR_FORMAT "] (" SSIZE_FORMAT " bytes)",
                     (intptr_t)_heap->low_boundary(), (intptr_t)_heap->high(),
                     (address)_heap->high() - (address)_heap->low_boundary());
     }
@@ -337,6 +337,11 @@ void CodeCache::blobs_do(CodeBlobClosure* f) {
 // Walk the list of methods which might contain non-perm oops.
 void CodeCache::scavenge_root_nmethods_do(CodeBlobClosure* f) {
   assert_locked_or_safepoint(CodeCache_lock);
+
+  if (UseG1GC) {
+    return;
+  }
+
   debug_only(mark_scavenge_root_nmethods());
 
   for (nmethod* cur = scavenge_root_nmethods(); cur != NULL; cur = cur->scavenge_root_link()) {
@@ -362,6 +367,11 @@ void CodeCache::scavenge_root_nmethods_do(CodeBlobClosure* f) {
 
 void CodeCache::add_scavenge_root_nmethod(nmethod* nm) {
   assert_locked_or_safepoint(CodeCache_lock);
+
+  if (UseG1GC) {
+    return;
+  }
+
   nm->set_on_scavenge_root_list();
   nm->set_scavenge_root_link(_scavenge_root_nmethods);
   set_scavenge_root_nmethods(nm);
@@ -370,6 +380,11 @@ void CodeCache::add_scavenge_root_nmethod(nmethod* nm) {
 
 void CodeCache::drop_scavenge_root_nmethod(nmethod* nm) {
   assert_locked_or_safepoint(CodeCache_lock);
+
+  if (UseG1GC) {
+    return;
+  }
+
   print_trace("drop_scavenge_root", nm);
   nmethod* last = NULL;
   nmethod* cur = scavenge_root_nmethods();
@@ -391,6 +406,11 @@ void CodeCache::drop_scavenge_root_nmethod(nmethod* nm) {
 
 void CodeCache::prune_scavenge_root_nmethods() {
   assert_locked_or_safepoint(CodeCache_lock);
+
+  if (UseG1GC) {
+    return;
+  }
+
   debug_only(mark_scavenge_root_nmethods());
 
   nmethod* last = NULL;
@@ -423,6 +443,10 @@ void CodeCache::prune_scavenge_root_nmethods() {
 
 #ifndef PRODUCT
 void CodeCache::asserted_non_scavengable_nmethods_do(CodeBlobClosure* f) {
+  if (UseG1GC) {
+    return;
+  }
+
   // While we are here, verify the integrity of the list.
   mark_scavenge_root_nmethods();
   for (nmethod* cur = scavenge_root_nmethods(); cur != NULL; cur = cur->scavenge_root_link()) {
@@ -463,9 +487,36 @@ void CodeCache::verify_perm_nmethods(CodeBlobClosure* f_or_null) {
 }
 #endif //PRODUCT
 
+void CodeCache::verify_clean_inline_caches() {
+#ifdef ASSERT
+  FOR_ALL_ALIVE_BLOBS(cb) {
+    if (cb->is_nmethod()) {
+      nmethod* nm = (nmethod*)cb;
+      assert(!nm->is_unloaded(), "Tautology");
+      nm->verify_clean_inline_caches();
+      nm->verify();
+    }
+  }
+#endif
+}
+
+void CodeCache::verify_icholder_relocations() {
+#ifdef ASSERT
+  // make sure that we aren't leaking icholders
+  int count = 0;
+  FOR_ALL_BLOBS(cb) {
+    if (cb->is_nmethod()) {
+      nmethod* nm = (nmethod*)cb;
+      count += nm->verify_icholder_relocations();
+    }
+  }
+
+  assert(count + InlineCacheBuffer::pending_icholder_count() + CompiledICHolder::live_not_claimed_count() ==
+         CompiledICHolder::live_count(), "must agree");
+#endif
+}
 
 void CodeCache::gc_prologue() {
-  assert(!nmethod::oops_do_marking_is_active(), "oops_do_marking_epilogue must be called");
 }
 
 void CodeCache::gc_epilogue() {
@@ -478,40 +529,14 @@ void CodeCache::gc_epilogue() {
         nm->cleanup_inline_caches();
       }
       DEBUG_ONLY(nm->verify());
-      nm->fix_oop_relocations();
+      DEBUG_ONLY(nm->verify_oop_relocations());
     }
   }
   set_needs_cache_clean(false);
   prune_scavenge_root_nmethods();
-  assert(!nmethod::oops_do_marking_is_active(), "oops_do_marking_prologue must be called");
 
-#ifdef ASSERT
-  // make sure that we aren't leaking icholders
-  int count = 0;
-  FOR_ALL_BLOBS(cb) {
-    if (cb->is_nmethod()) {
-      RelocIterator iter((nmethod*)cb);
-      while(iter.next()) {
-        if (iter.type() == relocInfo::virtual_call_type) {
-          if (CompiledIC::is_icholder_call_site(iter.virtual_call_reloc())) {
-            CompiledIC *ic = CompiledIC_at(iter.reloc());
-            if (TraceCompiledIC) {
-              tty->print("noticed icholder " INTPTR_FORMAT " ", ic->cached_icholder());
-              ic->print();
-            }
-            assert(ic->cached_icholder() != NULL, "must be non-NULL");
-            count++;
-          }
-        }
-      }
-    }
-  }
-
-  assert(count + InlineCacheBuffer::pending_icholder_count() + CompiledICHolder::live_not_claimed_count() ==
-         CompiledICHolder::live_count(), "must agree");
-#endif
+  verify_icholder_relocations();
 }
-
 
 void CodeCache::verify_oops() {
   MutexLockerEx mu(CodeCache_lock, Mutex::_no_safepoint_check_flag);
@@ -558,9 +583,9 @@ void CodeCache::initialize() {
   // This was originally just a check of the alignment, causing failure, instead, round
   // the code cache to the page size.  In particular, Solaris is moving to a larger
   // default page size.
-  CodeCacheExpansionSize = round_to(CodeCacheExpansionSize, os::vm_page_size()); //默认32k
-  InitialCodeCacheSize = round_to(InitialCodeCacheSize, os::vm_page_size()); //默认160k
-  ReservedCodeCacheSize = round_to(ReservedCodeCacheSize, os::vm_page_size()); //默认32m
+  CodeCacheExpansionSize = round_to(CodeCacheExpansionSize, os::vm_page_size());
+  InitialCodeCacheSize = round_to(InitialCodeCacheSize, os::vm_page_size());
+  ReservedCodeCacheSize = round_to(ReservedCodeCacheSize, os::vm_page_size());
   if (!_heap->reserve(ReservedCodeCacheSize, InitialCodeCacheSize, CodeCacheSegmentSize)) {
     vm_exit_during_initialization("Could not reserve enough space for code cache");
   }
@@ -687,7 +712,9 @@ int CodeCache::mark_for_evol_deoptimization(instanceKlassHandle dependee) {
 void CodeCache::mark_all_nmethods_for_deoptimization() {
   MutexLockerEx mu(CodeCache_lock, Mutex::_no_safepoint_check_flag);
   FOR_ALL_ALIVE_NMETHODS(nm) {
-    nm->mark_for_deoptimization();
+    if (!nm->method()->is_method_handle_intrinsic()) {
+      nm->mark_for_deoptimization();
+    }
   }
 }
 
@@ -775,7 +802,7 @@ void CodeCache::print_trace(const char* event, CodeBlob* cb, int size) {
   if (PrintCodeCache2) {  // Need to add a new flag
     ResourceMark rm;
     if (size == 0)  size = cb->size();
-    tty->print_cr("CodeCache %s:  addr: " INTPTR_FORMAT ", size: 0x%x", event, cb, size);
+    tty->print_cr("CodeCache %s:  addr: " INTPTR_FORMAT ", size: 0x%x", event, p2i(cb), size);
   }
 }
 
@@ -900,7 +927,7 @@ void CodeCache::print() {
 
   tty->print_cr("CodeCache:");
 
-  tty->print_cr("nmethod dependency checking time %f", dependentCheckTime.seconds(),
+  tty->print_cr("nmethod dependency checking time %f, per dependent %f", dependentCheckTime.seconds(),
                 dependentCheckTime.seconds() / dependentCheckCount);
 
   if (!live.is_empty()) {
@@ -947,9 +974,9 @@ void CodeCache::print_summary(outputStream* st, bool detailed) {
 
   if (detailed) {
     st->print_cr(" bounds [" INTPTR_FORMAT ", " INTPTR_FORMAT ", " INTPTR_FORMAT "]",
-                 _heap->low_boundary(),
-                 _heap->high(),
-                 _heap->high_boundary());
+                 p2i(_heap->low_boundary()),
+                 p2i(_heap->high()),
+                 p2i(_heap->high_boundary()));
     st->print_cr(" total_blobs=" UINT32_FORMAT " nmethods=" UINT32_FORMAT
                  " adapters=" UINT32_FORMAT,
                  nof_blobs(), nof_nmethods(), nof_adapters());

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2012, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -64,16 +64,19 @@
 #include "utilities/growableArray.hpp"
 #include "utilities/macros.hpp"
 #include "utilities/ostream.hpp"
-
 #if INCLUDE_TRACE
- #include "trace/tracing.hpp"
+#include "trace/tracing.hpp"
 #endif
 
 ClassLoaderData * ClassLoaderData::_the_null_class_loader_data = NULL;
 
 ClassLoaderData::ClassLoaderData(Handle h_class_loader, bool is_anonymous, Dependencies dependencies) :
   _class_loader(h_class_loader()),
-  _is_anonymous(is_anonymous), _keep_alive(is_anonymous), // initially
+  _is_anonymous(is_anonymous),
+  // An anonymous class loader data doesn't have anything to keep
+  // it from being unloaded during parsing of the anonymous class.
+  // The null-class-loader should always be kept alive.
+  _keep_alive(is_anonymous || h_class_loader.is_null()),
   _metaspace(NULL), _unloading(false), _klasses(NULL),
   _claimed(0), _jmethod_ids(NULL), _handles(NULL), _deallocate_list(NULL),
   _next(NULL), _dependencies(dependencies),
@@ -269,10 +272,10 @@ void ClassLoaderData::add_class(Klass* k) {
     ResourceMark rm;
     tty->print_cr("[TraceClassLoaderData] Adding k: " PTR_FORMAT " %s to CLD: "
                   PTR_FORMAT " loader: " PTR_FORMAT " %s",
-                  k,
+                  p2i(k),
                   k->external_name(),
-                  k->class_loader_data(),
-                  (void *)k->class_loader(),
+                  p2i(k->class_loader_data()),
+                  p2i((void *)k->class_loader()),
                   loader_name());
   }
 }
@@ -307,22 +310,55 @@ void ClassLoaderData::unload() {
 
   if (TraceClassLoaderData) {
     ResourceMark rm;
-    tty->print("[ClassLoaderData: unload loader data "PTR_FORMAT, this);
-    tty->print(" for instance "PTR_FORMAT" of %s", (void *)class_loader(),
+    tty->print("[ClassLoaderData: unload loader data " INTPTR_FORMAT, p2i(this));
+    tty->print(" for instance " INTPTR_FORMAT " of %s", p2i((void *)class_loader()),
                loader_name());
     if (is_anonymous()) {
-      tty->print(" for anonymous class  "PTR_FORMAT " ", _klasses);
+      tty->print(" for anonymous class  " INTPTR_FORMAT " ", p2i(_klasses));
     }
     tty->print_cr("]");
   }
 }
 
+#ifdef ASSERT
+class AllAliveClosure : public OopClosure {
+  BoolObjectClosure* _is_alive_closure;
+  bool _found_dead;
+ public:
+  AllAliveClosure(BoolObjectClosure* is_alive_closure) : _is_alive_closure(is_alive_closure), _found_dead(false) {}
+  template <typename T> void do_oop_work(T* p) {
+    T heap_oop = oopDesc::load_heap_oop(p);
+    if (!oopDesc::is_null(heap_oop)) {
+      oop obj = oopDesc::decode_heap_oop_not_null(heap_oop);
+      if (!_is_alive_closure->do_object_b(obj)) {
+        _found_dead = true;
+      }
+    }
+  }
+  void do_oop(oop* p)       { do_oop_work<oop>(p); }
+  void do_oop(narrowOop* p) { do_oop_work<narrowOop>(p); }
+  bool found_dead()         { return _found_dead; }
+};
+#endif
+
+oop ClassLoaderData::keep_alive_object() const {
+  assert(!keep_alive(), "Don't use with CLDs that are artificially kept alive");
+  return is_anonymous() ? _klasses->java_mirror() : class_loader();
+}
+
 bool ClassLoaderData::is_alive(BoolObjectClosure* is_alive_closure) const {
-  bool alive =
-    is_anonymous() ?
-       is_alive_closure->do_object_b(_klasses->java_mirror()) :
-       class_loader() == NULL || is_alive_closure->do_object_b(class_loader());
-  assert(!alive || claimed(), "must be claimed");
+  bool alive = keep_alive() // null class loader and incomplete anonymous klasses.
+      || is_alive_closure->do_object_b(keep_alive_object());
+
+#ifdef ASSERT
+  if (alive) {
+    AllAliveClosure all_alive_closure(is_alive_closure);
+    KlassToOopClosure klass_closure(&all_alive_closure);
+    const_cast<ClassLoaderData*>(this)->oops_do(&all_alive_closure, &klass_closure, false);
+    assert(!all_alive_closure.found_dead(), err_msg("Found dead oop in alive cld: " PTR_FORMAT, p2i(this)));
+  }
+#endif
+
   return alive;
 }
 
@@ -469,14 +505,14 @@ const char* ClassLoaderData::loader_name() {
 void ClassLoaderData::dump(outputStream * const out) {
   ResourceMark rm;
   out->print("ClassLoaderData CLD: "PTR_FORMAT", loader: "PTR_FORMAT", loader_klass: "PTR_FORMAT" %s {",
-      this, (void *)class_loader(),
-      class_loader() != NULL ? class_loader()->klass() : NULL, loader_name());
+      p2i(this), p2i((void *)class_loader()),
+      p2i(class_loader() != NULL ? class_loader()->klass() : NULL), loader_name());
   if (claimed()) out->print(" claimed ");
   if (is_unloading()) out->print(" unloading ");
-  out->print(" handles " INTPTR_FORMAT, handles());
+  out->print(" handles " INTPTR_FORMAT, p2i(handles()));
   out->cr();
   if (metaspace_or_null() != NULL) {
-    out->print_cr("metaspace: " PTR_FORMAT, metaspace_or_null());
+    out->print_cr("metaspace: " INTPTR_FORMAT, p2i(metaspace_or_null()));
     metaspace_or_null()->dump(out);
   } else {
     out->print_cr("metaspace: NULL");
@@ -520,11 +556,21 @@ void ClassLoaderData::verify() {
   }
 }
 
+bool ClassLoaderData::contains_klass(Klass* klass) {
+  for (Klass* k = _klasses; k != NULL; k = k->next_link()) {
+    if (k == klass) return true;
+  }
+  return false;
+}
+
 
 // GC root of class loader data created.
 ClassLoaderData* ClassLoaderDataGraph::_head = NULL;
 ClassLoaderData* ClassLoaderDataGraph::_unloading = NULL;
+ClassLoaderData* ClassLoaderDataGraph::_saved_unloading = NULL;
 ClassLoaderData* ClassLoaderDataGraph::_saved_head = NULL;
+
+bool ClassLoaderDataGraph::_should_purge = false;
 
 // Add a new class loader data node to the list.  Assign the newly created
 // ClassLoaderData into the java/lang/ClassLoader object as a hidden field
@@ -563,8 +609,8 @@ ClassLoaderData* ClassLoaderDataGraph::add(Handle loader, bool is_anonymous, TRA
       if (TraceClassLoaderData) {
         ResourceMark rm;
         tty->print("[ClassLoaderData: ");
-        tty->print("create class loader data "PTR_FORMAT, cld);
-        tty->print(" for instance "PTR_FORMAT" of %s", (void *)cld->class_loader(),
+        tty->print("create class loader data " INTPTR_FORMAT, p2i(cld));
+        tty->print(" for instance " INTPTR_FORMAT " of %s", p2i((void *)cld->class_loader()),
                    cld->loader_name());
         tty->print_cr("]");
       }
@@ -591,11 +637,36 @@ void ClassLoaderDataGraph::keep_alive_oops_do(OopClosure* f, KlassClosure* klass
 
 void ClassLoaderDataGraph::always_strong_oops_do(OopClosure* f, KlassClosure* klass_closure, bool must_claim) {
   if (ClassUnloading) {
-    ClassLoaderData::the_null_class_loader_data()->oops_do(f, klass_closure, must_claim);
-    // keep any special CLDs alive.
-    ClassLoaderDataGraph::keep_alive_oops_do(f, klass_closure, must_claim);
+    keep_alive_oops_do(f, klass_closure, must_claim);
   } else {
-    ClassLoaderDataGraph::oops_do(f, klass_closure, must_claim);
+    oops_do(f, klass_closure, must_claim);
+  }
+}
+
+void ClassLoaderDataGraph::cld_do(CLDClosure* cl) {
+  for (ClassLoaderData* cld = _head; cl != NULL && cld != NULL; cld = cld->next()) {
+    cl->do_cld(cld);
+  }
+}
+
+void ClassLoaderDataGraph::roots_cld_do(CLDClosure* strong, CLDClosure* weak) {
+  for (ClassLoaderData* cld = _head;  cld != NULL; cld = cld->_next) {
+    CLDClosure* closure = cld->keep_alive() ? strong : weak;
+    if (closure != NULL) {
+      closure->do_cld(cld);
+    }
+  }
+}
+
+void ClassLoaderDataGraph::keep_alive_cld_do(CLDClosure* cl) {
+  roots_cld_do(cl, NULL);
+}
+
+void ClassLoaderDataGraph::always_strong_cld_do(CLDClosure* cl) {
+  if (ClassUnloading) {
+    keep_alive_cld_do(cl);
+  } else {
+    cld_do(cl);
   }
 }
 
@@ -619,7 +690,9 @@ void ClassLoaderDataGraph::loaded_classes_do(KlassClosure* klass_closure) {
 
 void ClassLoaderDataGraph::classes_unloading_do(void f(Klass* const)) {
   assert(SafepointSynchronize::is_at_safepoint(), "must be at safepoint!");
-  for (ClassLoaderData* cld = _unloading; cld != NULL; cld = cld->next()) {
+  // Only walk the head until any clds not purged from prior unloading
+  // (CMS doesn't purge right away).
+  for (ClassLoaderData* cld = _unloading; cld != _saved_unloading; cld = cld->next()) {
     cld->classes_do(f);
   }
 }
@@ -648,38 +721,17 @@ GrowableArray<ClassLoaderData*>* ClassLoaderDataGraph::new_clds() {
   return array;
 }
 
-#ifndef PRODUCT
-// for debugging and hsfind(x)
-bool ClassLoaderDataGraph::contains(address x) {
-  // I think we need the _metaspace_lock taken here because the class loader
-  // data graph could be changing while we are walking it (new entries added,
-  // new entries being unloaded, etc).
-  if (DumpSharedSpaces) {
-    // There are only two metaspaces to worry about.
-    ClassLoaderData* ncld = ClassLoaderData::the_null_class_loader_data();
-    return (ncld->ro_metaspace()->contains(x) || ncld->rw_metaspace()->contains(x));
-  }
-
-  if (UseSharedSpaces && MetaspaceShared::is_in_shared_space(x)) {
-    return true;
-  }
-
-  for (ClassLoaderData* cld = _head; cld != NULL; cld = cld->next()) {
+bool ClassLoaderDataGraph::unload_list_contains(const void* x) {
+  assert(SafepointSynchronize::is_at_safepoint(), "only safe to call at safepoint");
+  for (ClassLoaderData* cld = _unloading; cld != NULL; cld = cld->next()) {
     if (cld->metaspace_or_null() != NULL && cld->metaspace_or_null()->contains(x)) {
-      return true;
-    }
-  }
-
-  // Could also be on an unloading list which is okay, ie. still allocated
-  // for a little while.
-  for (ClassLoaderData* ucld = _unloading; ucld != NULL; ucld = ucld->next()) {
-    if (ucld->metaspace_or_null() != NULL && ucld->metaspace_or_null()->contains(x)) {
       return true;
     }
   }
   return false;
 }
 
+#ifndef PRODUCT
 bool ClassLoaderDataGraph::contains_loader_data(ClassLoaderData* loader_data) {
   for (ClassLoaderData* data = _head; data != NULL; data = data->next()) {
     if (loader_data == data) {
@@ -694,20 +746,17 @@ bool ClassLoaderDataGraph::contains_loader_data(ClassLoaderData* loader_data) {
 
 // Move class loader data from main list to the unloaded list for unloading
 // and deallocation later.
-bool ClassLoaderDataGraph::do_unloading(BoolObjectClosure* is_alive_closure) {
+bool ClassLoaderDataGraph::do_unloading(BoolObjectClosure* is_alive_closure, bool clean_alive) {
   ClassLoaderData* data = _head;
   ClassLoaderData* prev = NULL;
   bool seen_dead_loader = false;
-  // mark metadata seen on the stack and code cache so we can delete
-  // unneeded entries.
-  bool has_redefined_a_class = JvmtiExport::has_redefined_a_class();
-  MetadataOnStackMark md_on_stack;
+
+  // Save previous _unloading pointer for CMS which may add to unloading list before
+  // purging and we don't want to rewalk the previously unloaded class loader data.
+  _saved_unloading = _unloading;
+
   while (data != NULL) {
-    if (data->keep_alive() || data->is_alive(is_alive_closure)) {
-      if (has_redefined_a_class) {
-        data->classes_do(InstanceKlass::purge_previous_versions);
-      }
-      data->free_deallocate_list();
+    if (data->is_alive(is_alive_closure)) {
       prev = data;
       data = data->next();
       continue;
@@ -729,6 +778,11 @@ bool ClassLoaderDataGraph::do_unloading(BoolObjectClosure* is_alive_closure) {
     _unloading = dead;
   }
 
+  if (clean_alive) {
+    // Clean previous versions and the deallocate list.
+    ClassLoaderDataGraph::clean_metaspaces();
+  }
+
   if (seen_dead_loader) {
     post_class_unload_events();
   }
@@ -736,7 +790,28 @@ bool ClassLoaderDataGraph::do_unloading(BoolObjectClosure* is_alive_closure) {
   return seen_dead_loader;
 }
 
+void ClassLoaderDataGraph::clean_metaspaces() {
+  // mark metadata seen on the stack and code cache so we can delete unneeded entries.
+  bool has_redefined_a_class = JvmtiExport::has_redefined_a_class();
+  MetadataOnStackMark md_on_stack(has_redefined_a_class);
+
+  if (has_redefined_a_class) {
+    // purge_previous_versions also cleans weak method links. Because
+    // one method's MDO can reference another method from another
+    // class loader, we need to first clean weak method links for all
+    // class loaders here. Below, we can then free redefined methods
+    // for all class loaders.
+    for (ClassLoaderData* data = _head; data != NULL; data = data->next()) {
+      data->classes_do(InstanceKlass::purge_previous_versions);
+    }
+  }
+
+  // Need to purge the previous version before deallocating.
+  free_deallocate_lists();
+}
+
 void ClassLoaderDataGraph::purge() {
+  assert(SafepointSynchronize::is_at_safepoint(), "must be at safepoint!");
   ClassLoaderData* list = _unloading;
   _unloading = NULL;
   ClassLoaderData* next = list;
@@ -760,6 +835,14 @@ void ClassLoaderDataGraph::post_class_unload_events(void) {
     Tracing::on_unloading_classes();
   }
 #endif
+}
+
+void ClassLoaderDataGraph::free_deallocate_lists() {
+  for (ClassLoaderData* cld = _head; cld != NULL; cld = cld->next()) {
+    // We need to keep this data until InstanceKlass::purge_previous_version has been
+    // called on all alive classes. See the comment in ClassLoaderDataGraph::clean_metaspaces.
+    cld->free_deallocate_list();
+  }
 }
 
 // CDS support
@@ -793,6 +876,60 @@ Metaspace* ClassLoaderData::rw_metaspace() {
   return _rw_metaspace;
 }
 
+ClassLoaderDataGraphKlassIteratorAtomic::ClassLoaderDataGraphKlassIteratorAtomic()
+    : _next_klass(NULL) {
+  ClassLoaderData* cld = ClassLoaderDataGraph::_head;
+  Klass* klass = NULL;
+
+  // Find the first klass in the CLDG.
+  while (cld != NULL) {
+    klass = cld->_klasses;
+    if (klass != NULL) {
+      _next_klass = klass;
+      return;
+    }
+    cld = cld->next();
+  }
+}
+
+Klass* ClassLoaderDataGraphKlassIteratorAtomic::next_klass_in_cldg(Klass* klass) {
+  Klass* next = klass->next_link();
+  if (next != NULL) {
+    return next;
+  }
+
+  // No more klasses in the current CLD. Time to find a new CLD.
+  ClassLoaderData* cld = klass->class_loader_data();
+  while (next == NULL) {
+    cld = cld->next();
+    if (cld == NULL) {
+      break;
+    }
+    next = cld->_klasses;
+  }
+
+  return next;
+}
+
+Klass* ClassLoaderDataGraphKlassIteratorAtomic::next_klass() {
+  Klass* head = (Klass*)_next_klass;
+
+  while (head != NULL) {
+    Klass* next = next_klass_in_cldg(head);
+
+    Klass* old_head = (Klass*)Atomic::cmpxchg_ptr(next, &_next_klass, head);
+
+    if (old_head == head) {
+      return head; // Won the CAS.
+    }
+
+    head = old_head;
+  }
+
+  // Nothing more for the iterator to hand out.
+  assert(head == NULL, err_msg("head is " PTR_FORMAT ", expected not null:", p2i(head)));
+  return NULL;
+}
 
 ClassLoaderDataGraphMetaspaceIterator::ClassLoaderDataGraphMetaspaceIterator() {
   _data = ClassLoaderDataGraph::_head;
@@ -825,7 +962,7 @@ void ClassLoaderData::print_value_on(outputStream* out) const {
   if (class_loader() == NULL) {
     out->print("NULL class_loader");
   } else {
-    out->print("class loader "PTR_FORMAT, this);
+    out->print("class loader " INTPTR_FORMAT, p2i(this));
     class_loader()->print_value_on(out);
   }
 }
@@ -846,4 +983,4 @@ void ClassLoaderDataGraph::class_unload_event(Klass* const k) {
   event.commit();
 }
 
-#endif /* INCLUDE_TRACE */
+#endif // INCLUDE_TRACE

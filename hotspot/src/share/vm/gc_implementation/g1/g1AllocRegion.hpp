@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2011, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2011, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -57,6 +57,9 @@ private:
   // correct use of init() and release()).
   HeapRegion* volatile _alloc_region;
 
+  // Allocation context associated with this alloc region.
+  AllocationContext_t _allocation_context;
+
   // It keeps track of the distinct number of regions that are used
   // for allocation in the active interval of this object, i.e.,
   // between a call to init() and a call to release(). The count
@@ -110,6 +113,10 @@ private:
   // else can allocate out of it.
   void retire(bool fill_up);
 
+  // After a region is allocated by alloc_new_region, this
+  // method is used to set it as the active alloc_region
+  void update_alloc_region(HeapRegion* alloc_region);
+
   // Allocate a new active region and use it to perform a word_size
   // allocation. The force parameter will be passed on to
   // G1CollectedHeap::allocate_new_alloc_region() and tells it to try
@@ -136,6 +143,9 @@ public:
     // Make sure that the dummy region does not escape this class.
     return (hr == _dummy_region) ? NULL : hr;
   }
+
+  void set_allocation_context(AllocationContext_t context) { _allocation_context = context; }
+  AllocationContext_t  allocation_context() { return _allocation_context; }
 
   uint count() { return _count; }
 
@@ -173,7 +183,7 @@ public:
 
   // Should be called when we want to release the active region which
   // is returned after it's been retired.
-  HeapRegion* release();
+  virtual HeapRegion* release();
 
 #if G1_ALLOC_REGION_TRACING
   void trace(const char* str, size_t word_size = 0, HeapWord* result = NULL);
@@ -182,9 +192,43 @@ public:
 #endif // G1_ALLOC_REGION_TRACING
 };
 
+class MutatorAllocRegion : public G1AllocRegion {
+protected:
+  virtual HeapRegion* allocate_new_region(size_t word_size, bool force);
+  virtual void retire_region(HeapRegion* alloc_region, size_t allocated_bytes);
+public:
+  MutatorAllocRegion()
+    : G1AllocRegion("Mutator Alloc Region", false /* bot_updates */) { }
+};
+
+class SurvivorGCAllocRegion : public G1AllocRegion {
+protected:
+  virtual HeapRegion* allocate_new_region(size_t word_size, bool force);
+  virtual void retire_region(HeapRegion* alloc_region, size_t allocated_bytes);
+public:
+  SurvivorGCAllocRegion()
+  : G1AllocRegion("Survivor GC Alloc Region", false /* bot_updates */) { }
+};
+
+class OldGCAllocRegion : public G1AllocRegion {
+protected:
+  virtual HeapRegion* allocate_new_region(size_t word_size, bool force);
+  virtual void retire_region(HeapRegion* alloc_region, size_t allocated_bytes);
+public:
+  OldGCAllocRegion()
+  : G1AllocRegion("Old GC Alloc Region", true /* bot_updates */) { }
+
+  // This specialization of release() makes sure that the last card that has
+  // been allocated into has been completely filled by a dummy object.  This
+  // avoids races when remembered set scanning wants to update the BOT of the
+  // last card in the retained old gc alloc region, and allocation threads
+  // allocating into that card at the same time.
+  virtual HeapRegion* release();
+};
+
 class ar_ext_msg : public err_msg {
 public:
-  ar_ext_msg(G1AllocRegion* alloc_region, const char *message) : err_msg("") {
+  ar_ext_msg(G1AllocRegion* alloc_region, const char *message) : err_msg("%s", "") {
     alloc_region->fill_in_ext_msg(this, message);
   }
 };

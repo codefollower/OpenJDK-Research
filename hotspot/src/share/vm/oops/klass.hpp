@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -32,7 +32,6 @@
 #include "oops/klassPS.hpp"
 #include "oops/metadata.hpp"
 #include "oops/oop.hpp"
-#include "runtime/orderAccess.hpp"
 #include "trace/traceMacros.hpp"
 #include "utilities/accessFlags.hpp"
 #include "utilities/macros.hpp"
@@ -91,6 +90,7 @@ class ClassLoaderData;
 class klassVtable;
 class ParCompactionManager;
 class KlassSizeStats;
+class fieldDescriptor;
 
 class Klass : public Metadata {
   friend class VMStructs;
@@ -176,12 +176,24 @@ class Klass : public Metadata {
   jbyte _modified_oops;             // Card Table Equivalent (YC/CMS support)
   jbyte _accumulated_modified_oops; // Mod Union Equivalent (CMS support)
 
+private:
+  // This is an index into FileMapHeader::_classpath_entry_table[], to
+  // associate this class with the JAR file where it's loaded from during
+  // dump time. If a class is not loaded from the shared archive, this field is
+  // -1.
+  jshort _shared_class_path_index;
+
+  friend class SharedClassUtil;
+protected:
+
   // Constructor
   Klass();
 
   void* operator new(size_t size, ClassLoaderData* loader_data, size_t word_size, TRAPS) throw();
 
  public:
+  enum MethodLookupMode { normal, skip_overpass, skip_defaults };
+
   bool is_klass() const volatile { return true; }
 
   // super
@@ -279,6 +291,15 @@ class Klass : public Metadata {
   void accumulate_modified_oops()        { if (has_modified_oops()) _accumulated_modified_oops = 1; }
   void clear_accumulated_modified_oops() { _accumulated_modified_oops = 0; }
   bool has_accumulated_modified_oops()   { return _accumulated_modified_oops == 1; }
+
+  int shared_classpath_index() const   {
+    return _shared_class_path_index;
+  };
+
+  void set_shared_classpath_index(int index) {
+    _shared_class_path_index = index;
+  };
+
 
  protected:                                // internal accessors
   Klass* subklass_oop() const            { return _subklass; }
@@ -421,10 +442,11 @@ class Klass : public Metadata {
   virtual void initialize(TRAPS);
   // lookup operation for MethodLookupCache
   friend class MethodLookupCache;
-  virtual Method* uncached_lookup_method(Symbol* name, Symbol* signature) const;
+  virtual Klass* find_field(Symbol* name, Symbol* signature, fieldDescriptor* fd) const;
+  virtual Method* uncached_lookup_method(Symbol* name, Symbol* signature, MethodLookupMode mode) const;
  public:
   Method* lookup_method(Symbol* name, Symbol* signature) const {
-    return uncached_lookup_method(name, signature);
+    return uncached_lookup_method(name, signature, normal);
   }
 
   // array class with specific rank
@@ -451,7 +473,7 @@ class Klass : public Metadata {
  public:
   // CDS support - remove and restore oops from metadata. Oops are not shared.
   virtual void remove_unshareable_info();
-  virtual void restore_unshareable_info(TRAPS);
+  virtual void restore_unshareable_info(ClassLoaderData* loader_data, Handle protection_domain, TRAPS);
 
  protected:
   // computes the subtype relationship
@@ -498,6 +520,7 @@ class Klass : public Metadata {
   virtual bool oop_is_objArray_slow()       const { return false; }
   virtual bool oop_is_typeArray_slow()      const { return false; }
  public:
+  virtual bool oop_is_instanceClassLoader() const { return false; }
   virtual bool oop_is_instanceMirror()      const { return false; }
   virtual bool oop_is_instanceRef()         const { return false; }
 
@@ -581,36 +604,9 @@ class Klass : public Metadata {
   // The is_alive closure passed in depends on the Garbage Collector used.
   bool is_loader_alive(BoolObjectClosure* is_alive);
 
-  static void clean_weak_klass_links(BoolObjectClosure* is_alive);
-
-  // Prefetch within oop iterators.  This is a macro because we
-  // can't guarantee that the compiler will inline it.  In 64-bit
-  // it generally doesn't.  Signature is
-  //
-  // static void prefetch_beyond(oop* const start,
-  //                             oop* const end,
-  //                             const intx foffset,
-  //                             const Prefetch::style pstyle);
-#define prefetch_beyond(start, end, foffset, pstyle) {   \
-    const intx foffset_ = (foffset);                     \
-    const Prefetch::style pstyle_ = (pstyle);            \
-    assert(foffset_ > 0, "prefetch beyond, not behind"); \
-    if (pstyle_ != Prefetch::do_none) {                  \
-      oop* ref = (start);                                \
-      if (ref < (end)) {                                 \
-        switch (pstyle_) {                               \
-        case Prefetch::do_read:                          \
-          Prefetch::read(*ref, foffset_);                \
-          break;                                         \
-        case Prefetch::do_write:                         \
-          Prefetch::write(*ref, foffset_);               \
-          break;                                         \
-        default:                                         \
-          ShouldNotReachHere();                          \
-          break;                                         \
-        }                                                \
-      }                                                  \
-    }                                                    \
+  static void clean_weak_klass_links(BoolObjectClosure* is_alive, bool clean_alive_klasses = true);
+  static void clean_subklass_tree(BoolObjectClosure* is_alive) {
+    clean_weak_klass_links(is_alive, false /* clean_alive_klasses */);
   }
 
   // iterators
@@ -695,8 +691,8 @@ class Klass : public Metadata {
   virtual const char* internal_name() const = 0;
 
   // Verification
-  virtual void verify_on(outputStream* st, bool check_dictionary);
-  void verify(bool check_dictionary = true) { verify_on(tty, check_dictionary); }
+  virtual void verify_on(outputStream* st);
+  void verify() { verify_on(tty); }
 
 #ifndef PRODUCT
   bool verify_vtable_index(int index);
@@ -718,7 +714,7 @@ class Klass : public Metadata {
  private:
   // barriers used by klass_oop_store
   void klass_update_barrier_set(oop v);
-  void klass_update_barrier_set_pre(void* p, oop v);
+  void klass_update_barrier_set_pre(oop* p, oop v);
 };
 
 #endif // SHARE_VM_OOPS_KLASS_HPP

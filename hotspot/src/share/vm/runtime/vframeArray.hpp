@@ -58,6 +58,9 @@ class vframeArrayElement : public _ValueObj {
     MonitorChunk* _monitors;                                     // active monitors for this vframe
     StackValueCollection* _locals;
     StackValueCollection* _expressions;
+#ifdef ASSERT
+    bool _removed_monitors;
+#endif
 
   public:
 
@@ -78,17 +81,15 @@ class vframeArrayElement : public _ValueObj {
 
   StackValueCollection* expressions(void) const        { return _expressions; }
 
-  void fill_in(compiledVFrame* vf);
+  void fill_in(compiledVFrame* vf, bool realloc_failures);
 
   // Formerly part of deoptimizedVFrame
 
 
   // Returns the on stack word size for this frame
   // callee_parameters is the number of callee locals residing inside this frame
-  int on_stack_size(int caller_actual_parameters,
-                    int callee_parameters,
+  int on_stack_size(int callee_parameters,
                     int callee_locals,
-                    bool is_bottom_frame,
                     bool is_top_frame,
                     int popframe_extra_stack_expression_els) const;
 
@@ -100,6 +101,12 @@ class vframeArrayElement : public _ValueObj {
                        bool is_top_frame,
                        bool is_bottom_frame,
                        int exec_mode);
+
+#ifdef ASSERT
+  void set_removed_monitors() {
+    _removed_monitors = true;
+  }
+#endif
 
 #ifndef PRODUCT
   void print(outputStream* st);
@@ -162,13 +169,14 @@ class vframeArray: public CHeapObj<mtCompiler> {
   int frames() const                            { return _frames;   }
 
   static vframeArray* allocate(JavaThread* thread, int frame_size, GrowableArray<compiledVFrame*>* chunk,
-                               RegisterMap* reg_map, frame sender, frame caller, frame self);
+                               RegisterMap* reg_map, frame sender, frame caller, frame self,
+                               bool realloc_failures);
 
 
   vframeArrayElement* element(int index)        { assert(is_within_bounds(index), "Bad index"); return &_elements[index]; }
 
   // Allocates a new vframe in the array and fills the array with vframe information in chunk
-  void fill_in(JavaThread* thread, int frame_size, GrowableArray<compiledVFrame*>* chunk, const RegisterMap *reg_map);
+  void fill_in(JavaThread* thread, int frame_size, GrowableArray<compiledVFrame*>* chunk, const RegisterMap *reg_map, bool realloc_failures);
 
   // Returns the owner of this vframeArray
   JavaThread* owner_thread() const           { return _owner_thread; }

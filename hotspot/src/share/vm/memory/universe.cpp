@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -26,6 +26,9 @@
 #include "classfile/classLoader.hpp"
 #include "classfile/classLoaderData.hpp"
 #include "classfile/javaClasses.hpp"
+#if INCLUDE_CDS
+#include "classfile/sharedClassUtil.hpp"
+#endif
 #include "classfile/symbolTable.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "classfile/vmSymbols.hpp"
@@ -34,6 +37,7 @@
 #include "gc_interface/collectedHeap.inline.hpp"
 #include "interpreter/interpreter.hpp"
 #include "memory/cardTableModRefBS.hpp"
+#include "memory/filemap.hpp"
 #include "memory/gcLocker.inline.hpp"
 #include "memory/genCollectedHeap.hpp"
 #include "memory/genRemSet.hpp"
@@ -74,9 +78,11 @@
 #include "gc_implementation/concurrentMarkSweep/cmsAdaptiveSizePolicy.hpp"
 #include "gc_implementation/concurrentMarkSweep/cmsCollectorPolicy.hpp"
 #include "gc_implementation/g1/g1CollectedHeap.inline.hpp"
-#include "gc_implementation/g1/g1CollectorPolicy.hpp"
+#include "gc_implementation/g1/g1CollectorPolicy_ext.hpp"
 #include "gc_implementation/parallelScavenge/parallelScavengeHeap.hpp"
 #endif // INCLUDE_ALL_GCS
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 // Known objects
 Klass* Universe::_boolArrayKlassObj                 = NULL;
@@ -113,6 +119,7 @@ oop Universe::_out_of_memory_error_metaspace          = NULL;
 oop Universe::_out_of_memory_error_class_metaspace    = NULL;
 oop Universe::_out_of_memory_error_array_size         = NULL;
 oop Universe::_out_of_memory_error_gc_overhead_limit  = NULL;
+oop Universe::_out_of_memory_error_realloc_objects    = NULL;
 objArrayOop Universe::_preallocated_out_of_memory_error_array = NULL;
 volatile jint Universe::_preallocated_out_of_memory_error_avail_count = 0;
 bool Universe::_verify_in_progress                    = false;
@@ -120,6 +127,8 @@ oop Universe::_null_ptr_exception_instance            = NULL;
 oop Universe::_arithmetic_exception_instance          = NULL;
 oop Universe::_virtual_machine_error_instance         = NULL;
 oop Universe::_vm_exception                           = NULL;
+oop Universe::_allocation_context_notification_obj    = NULL;
+
 Method* Universe::_throw_illegal_access_error         = NULL;
 Array<int>* Universe::_the_empty_int_array            = NULL;
 Array<u2>* Universe::_the_empty_short_array           = NULL;
@@ -182,6 +191,7 @@ void Universe::oops_do(OopClosure* f, bool do_all) {
   f->do_oop((oop*)&_out_of_memory_error_class_metaspace);
   f->do_oop((oop*)&_out_of_memory_error_array_size);
   f->do_oop((oop*)&_out_of_memory_error_gc_overhead_limit);
+  f->do_oop((oop*)&_out_of_memory_error_realloc_objects);
     f->do_oop((oop*)&_preallocated_out_of_memory_error_array);
   f->do_oop((oop*)&_null_ptr_exception_instance);
   f->do_oop((oop*)&_arithmetic_exception_instance);
@@ -189,6 +199,7 @@ void Universe::oops_do(OopClosure* f, bool do_all) {
   f->do_oop((oop*)&_main_thread_group);
   f->do_oop((oop*)&_system_thread_group);
   f->do_oop((oop*)&_vm_exception);
+  f->do_oop((oop*)&_allocation_context_notification_obj);
   debug_only(f->do_oop((oop*)&_fullgc_alot_dummy_array);)
 }
 
@@ -236,8 +247,9 @@ void Universe::check_alignment(uintx size, uintx alignment, const char* name) {
 void initialize_basic_type_klass(Klass* k, TRAPS) {
   Klass* ok = SystemDictionary::Object_klass();
   if (UseSharedSpaces) {
+    ClassLoaderData* loader_data = ClassLoaderData::the_null_class_loader_data();
     assert(k->super() == ok, "u3");
-    k->restore_unshareable_info(CHECK);
+    k->restore_unshareable_info(loader_data, Handle(), CHECK);
   } else {
     k->initialize_supers(ok, CHECK);
   }
@@ -564,7 +576,8 @@ bool Universe::should_fill_in_stack_trace(Handle throwable) {
           (throwable() != Universe::_out_of_memory_error_metaspace)  &&
           (throwable() != Universe::_out_of_memory_error_class_metaspace)  &&
           (throwable() != Universe::_out_of_memory_error_array_size) &&
-          (throwable() != Universe::_out_of_memory_error_gc_overhead_limit));
+          (throwable() != Universe::_out_of_memory_error_gc_overhead_limit) &&
+          (throwable() != Universe::_out_of_memory_error_realloc_objects));
 }
 
 
@@ -632,7 +645,6 @@ jint universe_init() {
   guarantee(sizeof(oop) % sizeof(HeapWord) == 0,
             "oop size is not not a multiple of HeapWord size");
   TraceTime timer("Genesis", TraceStartupTime);
-  GC_locker::lock();  // do not allow gc during bootstrapping
   JavaClasses::compute_hard_coded_offsets();
 
   jint status = Universe::initialize_heap();
@@ -664,6 +676,10 @@ jint universe_init() {
     SymbolTable::create_table();
     StringTable::create_table();
     ClassLoader::create_package_info_table();
+
+    if (DumpSharedSpaces) {
+      MetaspaceShared::prepare_for_dumping();
+    }
   }
 
   return JNI_OK;
@@ -759,7 +775,7 @@ char* Universe::preferred_heap_base(size_t heap_size, size_t alignment, NARROW_O
       // the correct no-access prefix.
       // The final value will be set in initialize_heap() below.
       Universe::set_narrow_oop_base((address)UnscaledOopHeapMax);
-#ifdef _WIN64
+#if defined(_WIN64) || defined(AIX)
       if (UseLargePages) {
         // Cannot allocate guard pages for implicit checks in indexed
         // addressing mode when large pages are specified on windows.
@@ -785,7 +801,7 @@ jint Universe::initialize_heap() {
 
   } else if (UseG1GC) {
 #if INCLUDE_ALL_GCS
-    G1CollectorPolicy* g1p = new G1CollectorPolicy();
+    G1CollectorPolicyExt* g1p = new G1CollectorPolicyExt();
     g1p->initialize_all();
     G1CollectedHeap* g1h = new G1CollectedHeap(g1p);
     Universe::_collectedHeap = g1h;
@@ -816,6 +832,8 @@ jint Universe::initialize_heap() {
     Universe::_collectedHeap = new GenCollectedHeap(gc_policy);
   }
 
+  ThreadLocalAllocBuffer::set_max_size(Universe::heap()->max_tlab_size());
+
   jint status = Universe::heap()->initialize();
   if (status != JNI_OK) {
     return status;
@@ -839,6 +857,11 @@ jint Universe::initialize_heap() {
       // Can't reserve heap below 32Gb.
       // keep the Universe::narrow_oop_base() set in Universe::reserve_heap()
       Universe::set_narrow_oop_shift(LogMinObjAlignmentInBytes);
+#ifdef AIX
+      // There is no protected page before the heap. This assures all oops
+      // are decoded so that NULL is preserved, so this page will not be accessed.
+      Universe::set_narrow_oop_use_implicit_null_checks(false);
+#endif
       if (verbose) {
         tty->print(", %s: "PTR_FORMAT,
             narrow_oop_mode_to_string(HeapBasedNarrowOop),
@@ -1024,6 +1047,7 @@ bool universe_post_init() {
     Universe::_out_of_memory_error_array_size = k_h->allocate_instance(CHECK_false);
     Universe::_out_of_memory_error_gc_overhead_limit =
       k_h->allocate_instance(CHECK_false);
+    Universe::_out_of_memory_error_realloc_objects = k_h->allocate_instance(CHECK_false);
 
     // Setup preallocated NullPointerException
     // (this is currently used for a cheap & dirty solution in compiler exception handling)
@@ -1062,6 +1086,9 @@ bool universe_post_init() {
 
     msg = java_lang_String::create_from_str("GC overhead limit exceeded", CHECK_false);
     java_lang_Throwable::set_message(Universe::_out_of_memory_error_gc_overhead_limit, msg());
+
+    msg = java_lang_String::create_from_str("Java heap space: failed reallocation of scalar replaced objects", CHECK_false);
+    java_lang_Throwable::set_message(Universe::_out_of_memory_error_realloc_objects, msg());
 
     msg = java_lang_String::create_from_str("/ by zero", CHECK_false);
     java_lang_Throwable::set_message(Universe::_arithmetic_exception_instance, msg());
@@ -1157,9 +1184,12 @@ bool universe_post_init() {
 
   MemoryService::add_metaspace_memory_pools();
 
-  GC_locker::unlock();  // allow gc after bootstrapping
-
   MemoryService::set_universe_heap(Universe::_collectedHeap);
+#if INCLUDE_CDS
+  if (UseSharedSpaces) {
+    SharedClassUtil::initialize(CHECK_false);
+  }
+#endif
   return true;
 }
 
@@ -1344,7 +1374,7 @@ void Universe::verify(VerifyOption option, const char* prefix, bool silent) {
   HandleMark hm;  // Handles created during verification can be zapped
   _verify_count++;
 
-  if (!silent) gclog_or_tty->print(prefix);
+  if (!silent) gclog_or_tty->print("%s", prefix);
   if (!silent) gclog_or_tty->print("[Verifying ");
   if (!silent) gclog_or_tty->print("threads ");
   Threads::verify();
