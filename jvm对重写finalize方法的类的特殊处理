@@ -1,3 +1,14 @@
+总述：
+1，编译时不对复写了finalize()方法的类做特殊处理，运行时加载该类会被检查出复写了finalize()，然后设置标志位has_finalizer。
+2，创建对象时不但创建一个该类对象，同时创建一个Finalizer对象，并被Finalizer对象引用，
+   然后Finalizer对象被加入到Finalizer.unfinalized队列中。
+3，gc时发现Finalizer.unfinalized中有需要执行finalize()的对象，就会将其加入到Reference.pending链表中。
+4，通过Reference.ReferenceHandler线程将Reference.pending链表加入到Finalizer.queue中。
+5，通过Finalizer.FinalizerThread线程将queue数据poll出来并执行finalize()方法。
+6，执行了finalize()的对象被移除Finalizer.unfinalized队列。
+
+如果看不懂，不要紧，继续往下看。
+
 假设我们有一个java类：
 
 public class B{
