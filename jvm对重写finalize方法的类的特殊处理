@@ -87,7 +87,7 @@ final class Finalizer extends FinalReference<Object> {
 }
 
 是一个referrance，jvm特殊处理的引用类型一共有五种soft, weak, phantom, final, cleaner五种引用类型，这个FinalReference就是其中一种，所以在jvm做垃圾回收的时候会对它new Finalizer(finalizee)做特殊处理。
-总结，当new一个覆盖了finalize方法的实例时，同时会new一个FinalReference，
+所以说，当new一个覆盖了finalize方法的实例时，同时会new一个FinalReference，
 
 然后Finalizer构造函数执行下列操作：
 private Finalizer(Object finalizee) {
@@ -117,13 +117,13 @@ private static class ReferenceHandler extends Thread {
         for (;;) {
             Reference<Object> r;
             synchronized (lock) {
-如果有pending的引用类型，那就把它送给r变量，然后塞进queue里面
+1，如果有pending的引用类型，那就把它送给r变量，然后塞进queue里面
                 if (pending != null) {
                     r = pending;
                     pending = r.discovered;
                     r.discovered = null;
                 } else {
- 如果没有pending的引用变量，那必然不需要改什么东西啊，等待有pending为止。
+ 2，如果没有pending的引用变量，那必然不需要改什么东西啊，等待有pending为止。
                     try {
                         try {
                             lock.wait();
@@ -138,14 +138,14 @@ private static class ReferenceHandler extends Thread {
                 ((Cleaner)r).clean();
                 continue;
             }
-现在把pending的引用塞进queue吧。
+3，现在把pending的引用塞进queue吧。
             ReferenceQueue<Object> q = r.queue;
             if (q != ReferenceQueue.NULL) q.enqueue(r);
         }
     }
 }
 
-lock.wait();是一个wait的操作，那必然有一个notify操作与其匹配，遗憾的是这个notify操作不在java代码里，而是在jvm代码中，简单粘一段吧：
+除了1,2,3点外，还有lock.wait()是一个wait的操作，那必然有一个notify操作与其匹配，遗憾的是这个notify操作不在java代码里，而是在jvm代码中，简单粘一段吧：
 void InstanceRefKlass::release_and_notify_pending_list_lock(BasicLock *pending_list_basic_lock) {
   Thread* __the_thread__; 
   PreserveExceptionMark __em(__the_thread__);
@@ -161,10 +161,10 @@ void InstanceRefKlass::release_and_notify_pending_list_lock(BasicLock *pending_l
   if (HAS_PENDING_EXCEPTION) CLEAR_PENDING_EXCEPTION;
 }
 
-看代码就知道了，当jvm里的pending_list()不为null的时候，就会notify这个lock，然后释放锁，具体代码不往里看了,这步操作实际是在gc完成之后才会做，所以gc之后pending变量才会有值。
+看代码就知道了，当jvm里的pending_list()不为null的时候，就会notify这个lock，然后释放锁，具体代码不往里看了,这步操作实际是在gc完成之后才会做，所以gc之后刚才的线程才会被重启。。。。。
 
 那pending变量到底是什么呢？他是一个链表，等待被加入到queue里面，是jvm在gc的时候插入新元素的，稍后来说明这个pending怎么插入新元素的，还有transient private Reference<T> discovered;变量相当于链表中next指针。
-那么接上刚才的java代码，notify之后if (pending != null) 这个判断就会Reference<Object> r;为pending的值然后在下面
+那么接上刚才的java代码，notify之后的代码if (pending != null) 这个判断就会Reference<Object> r;为pending的值然后在下面
 	ReferenceQueue<Object> q = r.queue;
 	if (q != ReferenceQueue.NULL) q.enqueue(r);
 把pending的东西塞进queue里面，这个queue就是Finalizer里面的静态变量private static ReferenceQueue<Object> queue = new ReferenceQueue<>();，
@@ -205,7 +205,8 @@ private static class FinalizerThread extends Thread {
 此时finalize方法执行完了，我们的析构也就结束了。
 但是还不清楚的一点是这个Reference.pending列表怎么往里添加东西呢？谁来添加？何时来添加？这就要看jvm的垃圾回收系统了。
 
-假如，我们的业务代码使用完这个bubbo对象，把他的引用bubbo=null;，那么没有其他变量显示的引用它了，它就该被jvm回收了，但是别忘了，还有一个游离的Finalizer对象还对它有引用.那么在gc的时候，以默认的parallelscavenge为例：
+假如，我们的业务代码使用完这个bubbo对象，把他的引用bubbo=null;，那么没有其他变量显示的引用它了，它就该被jvm回收了，
+但是别忘了，还有一个游离的Finalizer对象还对它有引用，这个Finalizer对象被Finalizer类的静态变量unfinalized引用着.那么在gc的时候，以默认的parallelscavenge为例：
 
 当我们使用java的System.gc();的时候会调用jni方法：首先：
 
@@ -280,8 +281,8 @@ void PSMarkSweep::invoke(bool maximum_heap_compaction) {
 
 因为ScavengeBeforeFullGC默认开启所以进行年轻带gc：PSScavenge::invoke_no_policy()，
 PSScavenge::invoke_no_policy()代码太多了，不全附上了，只给出对referrance特殊处理的那部分：
-PSScavenge::invoke_no_policy()
-{
+
+PSScavenge::invoke_no_policy() {
 jvm在初始化阶段会建七八个thread专门用于处理gc操作
 	PSPromotionManager* promotion_manager = PSPromotionManager::vm_thread_promotion_manager();
     {
@@ -353,6 +354,284 @@ jvm在初始化阶段会建七八个thread专门用于处理gc操作
     }
 }
 
+简单的描述附加在代码上了，在细节的东西我也不清楚。
+到这里，回想起刚才的bubbo对象只被一个叫Finalizer的对象引用着，这个Finalizer对象只被一个叫unfinalized变量引用着
+这个unfinalized是一个静态变量，静态变量是属于类的变量，那也就是Finalizer.class对象，
+那么现在就必须要看一下下面这句java代码在jvm中是怎么样执行得了：
+	unfinalized = this;
+这句话将this赋值给unfinalized，因为unfinalized是个静态变量，那对应的java字节码叫putstatic字节码，我们来看putstatic是怎么实现的：
+	def(Bytecodes::_putstatic           , ubcp|____|clvm|____, vtos, vtos, putstatic           , f2_byte      );
+	
+然后有了：由于我们的unfinalized是一个引用类型变量，对应java字节码的栈顶传参就是atos，那么就有
+void TemplateTable::putfield_or_static(int byte_no, bool is_static) {
+  transition(vtos, vtos);
+
+  const Register cache = rcx;
+  const Register index = rdx;
+  const Register obj   = rcx;
+  const Register off   = rbx;
+  const Register flags = rax;
+  const Register bc    = c_rarg3;
+
+  resolve_cache_and_index(byte_no, cache, index, sizeof(u2));
+  jvmti_post_field_mod(cache, index, is_static);
+  load_field_cp_cache_entry(obj, cache, index, off, flags, is_static);
+
+  Label notVolatile, Done;
+  __ movl(rdx, flags);
+  __ shrl(rdx, ConstantPoolCacheEntry::is_volatile_shift);
+  __ andl(rdx, 0x1);
+
+  // field address
+  const Address field(obj, off, Address::times_1);
+
+  Label notByte, notInt, notShort, notChar,
+        notLong, notFloat, notObj, notDouble;
+
+  __ shrl(flags, ConstantPoolCacheEntry::tos_state_shift);
+
+  __ andl(flags, ConstantPoolCacheEntry::tos_state_mask);
+  __ jcc(Assembler::notZero, notByte);
+
+  // atos
+  {
+    __ pop(atos);
+    if (!is_static) pop_and_check_object(obj);
+    // Store into the field
+    do_oop_store(_masm, field, rax, _bs->kind(), false);
+    if (!is_static) {
+      patch_bytecode(Bytecodes::_fast_aputfield, bc, rbx, true, byte_no);
+    }
+    __ jmp(Done);
+  }
+
+  __ bind(Done);
+
+  // Check for volatile store
+  __ testl(rdx, rdx);
+  __ jcc(Assembler::zero, notVolatile);
+  volatile_barrier(Assembler::Membar_mask_bits(Assembler::StoreLoad | Assembler::StoreStore));
+  __ bind(notVolatile);
+}
+
+因为is_static为true，那么直有最核心的一句代码do_oop_store(_masm, field, rax, _bs->kind(), false);
+而且很重要的一点__ pop(atos);这句话会把栈顶参数，也就是Finalizer对象地址，放入到rax寄存器当中，然后才有
+do_oop_store(_masm, field, rax, _bs->kind(), false);这个东西，rax就被传进去了。
+
+记住这一点之后再往下看看一下这个裁剪过的代码：
+
+static void do_oop_store(InterpreterMacroAssembler* _masm,Address obj, Register val, BarrierSet::Name barrier, bool precise) {
+  switch (barrier) {
+    case BarrierSet::CardTableModRef:
+    case BarrierSet::CardTableExtension:
+      {
+        if (val == noreg) {
+          __ store_heap_oop_null(obj);
+        } else {
+          __ store_heap_oop(obj, val);
+          // flatten object address if needed
+          if (!precise || (obj.index() == noreg && obj.disp() == 0)) {
+            __ store_check(obj.base());
+          } else {
+            __ leaq(rdx, obj);
+            __ store_check(rdx);
+          }
+        }
+      }
+      break;
+    default      :
+  }
+}	
+__ store_heap_oop(obj, val);这句就是给unfinalized=this了的真正操作了，然后precise为false所以直接__ store_check(obj.base()); ，obj.base()就是rcx寄存器里的目标对象Finalizer.class
+
+void MacroAssembler::store_check(Register obj) {
+  // Does a store check for the oop in register obj. The content of
+  // register obj is destroyed afterwards.
+  store_check_part_1(obj);
+  store_check_part_2(obj);
+}
+继续看第二步：
+void MacroAssembler::store_check_part_2(Register obj) {
+  BarrierSet* bs = Universe::heap()->barrier_set();
+  CardTableModRefBS* ct = (CardTableModRefBS*)bs;
+
+  intptr_t disp = (intptr_t) ct->byte_map_base;
+  if (is_simm32(disp)) {
+    Address cardtable(noreg, obj, Address::times_1, disp);
+    movb(cardtable, 0);
+  } else {
+    AddressLiteral cardtable((address)ct->byte_map_base, relocInfo::none);
+    Address index(noreg, obj, Address::times_1);
+    movb(as_Address(ArrayAddress(cardtable, index)), 0);
+  }
+}
+
+好了，把这几个玩意丢进cardtable了，具体我也看不懂了，卡表就是一个跨带引用的中间数据结构，比如年老带的对象引用一个年轻带的对象，那必然就会在cardtable里有记录。
+Finalizer.class也会在卡表里有记录，因为Finalizer.class的一个变量引用着一个年轻带的对象。
+
+接下来，看一下这个调用栈
+ReferenceProcessor::get_discovered_list(enum ReferenceType) : DiscoveredList *
+	ReferenceProcessor::discover_reference(oop, enum ReferenceType) : bool
+		specialized_oop_push_contents<T>(InstanceRefKlass *, PSPromotionManager *, oop) : void
+			InstanceRefKlass::oop_push_contents(PSPromotionManager *, oop) : void (2 matches)
+				oopDesc::push_contents(PSPromotionManager *) : void
+					CardTableExtension::scavenge_contents_parallel(ObjectStartArray *, MutableSpace *, HeapWord *, PSPromotionManager *, uint, uint) : void (2 matches)
+						OldToYoungRootsTask::do_it(GCTaskManager *, uint) : void
+
+具体代码不粘了，OldToYoungRootsTask就是其他带对年轻带的处理的job， 然后调用CardTableExtension::scavenge_contents_parallel会遍历整个卡表，Finalizer.class也会被发现那就会调用他的oopDesc::push_contents
+inline void oopDesc::push_contents(PSPromotionManager* pm) {
+  Klass* k = klass();
+  if (!k->oop_is_typeArray()) {
+    k->oop_push_contents(pm, this);
+  }
+}
+其实就是调用他的Klass对象的oop_push_contents，然后Finalizer是一个InstanceRefKlass，所以进入：
+template <class T> void specialized_oop_push_contents(InstanceRefKlass *ref, PSPromotionManager* pm, oop obj) {
+  T* referent_addr = (T*)java_lang_ref_Reference::referent_addr(obj);
+  if (PSScavenge::should_scavenge(referent_addr)) {
+    ReferenceProcessor* rp = PSScavenge::reference_processor();
+    if (rp->discover_reference(obj, ref->reference_type())) {
+      ref->InstanceKlass::oop_push_contents(pm, obj);
+      return;
+    } else {
+      pm->claim_or_forward_depth(referent_addr);
+    }
+  }
+  T* next_addr = (T*)java_lang_ref_Reference::next_addr(obj);
+  if (ReferenceProcessor::pending_list_uses_discovered_field()) {
+    T  next_oop = oopDesc::load_heap_oop(next_addr);
+    if (!oopDesc::is_null(next_oop)) { // i.e. ref is not "active"
+      T* discovered_addr = (T*)java_lang_ref_Reference::discovered_addr(obj);
+      if (PSScavenge::should_scavenge(discovered_addr)) {
+        pm->claim_or_forward_depth(discovered_addr);
+      }
+    }
+  }
+  if (PSScavenge::should_scavenge(next_addr)) {
+    pm->claim_or_forward_depth(next_addr);
+  }
+  ref->InstanceKlass::oop_push_contents(pm, obj);
+}
+
+他的参数有这三个InstanceRefKlass *ref, PSPromotionManager* pm, oop obj，，那么  ref就是Finalizer.class  ，  oop obj就是Finalizer对象，看代码即可知道，
+if (PSScavenge::should_scavenge(referent_addr))就是看Finalizer对象的referent变量（也就是那个buddo），是不是在年轻带上。在年轻带上说明是新new的一个，我们就要对他进行特殊处理。
+这行代码来看一下if (rp->discover_reference(obj, ref->reference_type())) 裁剪过的代码：
+
+bool ReferenceProcessor::discover_reference(oop obj, ReferenceType rt) {
+  if (!_discovering_refs || !RegisterReferences) {
+    return false;
+  }
+  oop next = java_lang_ref_Reference::next(obj);
+  if (next != NULL) {   // Ref is no longer active
+    return false;
+  }
+
+  HeapWord* obj_addr = (HeapWord*)obj;
+  if (RefDiscoveryPolicy == ReferenceBasedDiscovery && !_span.contains(obj_addr)) {
+
+    return false;
+  }
+  if (is_alive_non_header() != NULL) {
+    verify_referent(obj);
+    if (is_alive_non_header()->do_object_b(java_lang_ref_Reference::referent(obj))) {
+      return false;  // referent is reachable
+    }
+  }
+  if (rt == REF_SOFT) {
+    if (!_current_soft_ref_policy->should_clear_reference(obj, _soft_ref_timestamp_clock)) {
+      return false;
+    }
+  }
+
+  ResourceMark rm;      // Needed for tracing.
+
+  HeapWord* const discovered_addr = java_lang_ref_Reference::discovered_addr(obj);
+  const oop  discovered = java_lang_ref_Reference::discovered(obj);
+
+  if (discovered != NULL) {
+    if (RefDiscoveryPolicy == ReferentBasedDiscovery) {
+      return false;
+    } else {
+      return true;
+    }
+  }
+
+  if (RefDiscoveryPolicy == ReferentBasedDiscovery) {
+    verify_referent(obj);
+    if (_span.contains(obj_addr) || (discovery_is_atomic() && _span.contains(java_lang_ref_Reference::referent(obj)))) {
+
+    } else {
+      return false;
+    }
+  }
+
+  // Get the right type of discovered queue head.
+  DiscoveredList* list = get_discovered_list(rt);
+  if (list == NULL) {
+    return false;   // nothing special needs to be done
+  }
+
+  if (_discovery_is_mt) {
+    add_to_discovered_list_mt(*list, obj, discovered_addr);
+  } else {
+    oop current_head = list->head();
+    // The last ref must have its discovered field pointing to itself.
+    oop next_discovered = (current_head != NULL) ? current_head : obj;
+
+    oop_store_raw(discovered_addr, next_discovered);
+    list->set_head(obj);
+    list->inc_length(1);
+
+  }
+
+  verify_referent(obj);
+  return true;
+}
+
+inline DiscoveredList* ReferenceProcessor::get_discovered_list(ReferenceType rt) {
+  DiscoveredList* list = NULL;
+  switch (rt) {
+    case REF_OTHER:
+      // Unknown reference type, no special treatment
+      break;
+    case REF_SOFT:
+      list = &_discoveredSoftRefs[id];
+      break;
+    case REF_WEAK:
+      list = &_discoveredWeakRefs[id];
+      break;
+    case REF_FINAL:
+      list = &_discoveredFinalRefs[id];
+      break;
+    case REF_PHANTOM:
+      list = &_discoveredPhantomRefs[id];
+      break;
+    case REF_CLEANER:
+      list = &_discoveredCleanerRefs[id];
+      break;
+    case REF_NONE:
+      // we should not reach here if we are an InstanceRefKlass
+    default:
+      ;
+  }
+  return list;
+}
+
+代码经过一系列判断，最后发现这个Finalizer对象却是要被处理的，所以进入最后
+ 	DiscoveredList* list = get_discovered_list(rt);
+	oop current_head = list->head();
+    // The last ref must have its discovered field pointing to itself.
+    oop next_discovered = (current_head != NULL) ? current_head : obj;
+
+    oop_store_raw(discovered_addr, next_discovered);
+    list->set_head(obj);
+    list->inc_length(1);
+这些代码，还记得（还有transient private Reference<T> discovered;变量相当于链表中next指针）这句话么？这些操作就是 thisFinalizer.discovered=nextFinalizer,然后list=thisFinalizer，链表就形成啦。。。。。。
+
+好了 我们的所有应该被处理的Finalizer对象，在这一阶段已经全部被塞入到_discoveredFinalRefs列表里面啦。。。。。？
+
+还记得之前有个pending字段让我们很困惑么？下面改到他了。。。
+
 下面看一下使用了pending字段的调用栈：
 ReferenceProcessor::enqueue_discovered_reflist(DiscoveredList &, HeapWord *) : void
 	ReferenceProcessor::enqueue_discovered_reflists(HeapWord *, AbstractRefProcTaskExecutor *) : void
@@ -361,9 +640,7 @@ ReferenceProcessor::enqueue_discovered_reflist(DiscoveredList &, HeapWord *) : v
 				PSScavenge::invoke_no_policy() : bool
 					PSScavenge::invoke() : bool
 
-由此调用栈就知道了，reference_processor()->enqueue_discovered_references(NULL);这句代码真正的插入了pending，具体代码不贴了，他这一步enqueue_discovered_reflist就是建立pending链表的过程，
-比如referrence1, referrence1.discovered = referrence2, referrence2.discovered = referrence3, referrence3.discovered = referrence4, ..........
-之后通过cas操作把把pending赋值为referrence1，即可。然后等gc完成了自然后去notify那个java中的锁，就开始进行finalize了。
+那么他的代码是：
 
 void ReferenceProcessor::enqueue_discovered_reflist(DiscoveredList& refs_list, HeapWord* pending_list_addr) {
   oop obj = NULL;
@@ -400,218 +677,10 @@ void ReferenceProcessor::enqueue_discovered_reflist(DiscoveredList& refs_list, H
   }
 }
 
-看这个函数 那么这个DiscoveredList& refs_list,是怎么来的呢？又要回到PSScavenge::invoke_no_policy()中了，看代码
+reference_processor()->enqueue_discovered_references(NULL);这句代码真正的插入了pending，，他这一步enqueue_discovered_reflist就是建立pending链表的过程，
+比如referrence1, referrence1.discovered = referrence2, referrence2.discovered = referrence3, referrence3.discovered = referrence4, ..........
+之后通过cas操作把把pending赋值为referrence1，即可。然后等gc完成了自然后去notify那个java中的锁，就开始进行finalize了。
+继续看这个函数 的参数DiscoveredList& refs_list,是怎么来的呢？这就是我们刚才得到的_discoveredFinalRefs啊。
 
-
-
-
-ReferenceProcessorStats ReferenceProcessor::process_discovered_references(
-  BoolObjectClosure*           is_alive,
-  OopClosure*                  keep_alive,
-  VoidClosure*                 complete_gc,
-  AbstractRefProcTaskExecutor* task_executor,
-  GCTimer*                     gc_timer,
-  GCId                         gc_id) {
-
-  // Stop treating discovered references specially.
-  disable_discovery();
-
-  _soft_ref_timestamp_clock = java_lang_ref_SoftReference::clock();
-
-  bool trace_time = PrintGCDetails && PrintReferenceGC;
-
-  // Soft references
-  size_t soft_count = 0;
-  {
-    GCTraceTime tt("SoftReference", trace_time, false, gc_timer, gc_id);
-    soft_count = process_discovered_reflist(_discoveredSoftRefs, _current_soft_ref_policy, true, is_alive, keep_alive, complete_gc, task_executor);
-  }
-
-  update_soft_ref_master_clock();
-
-  // Weak references
-  size_t weak_count = 0;
-  {
-    GCTraceTime tt("WeakReference", trace_time, false, gc_timer, gc_id);
-    weak_count = process_discovered_reflist(_discoveredWeakRefs, NULL, true, is_alive, keep_alive, complete_gc, task_executor);
-  }
-
-  // Final references
-  size_t final_count = 0;
-  {
-    GCTraceTime tt("FinalReference", trace_time, false, gc_timer, gc_id);
-    final_count = process_discovered_reflist(_discoveredFinalRefs, NULL, false, is_alive, keep_alive, complete_gc, task_executor);
-  }
-
-  // Phantom references
-  size_t phantom_count = 0;
-  {
-    GCTraceTime tt("PhantomReference", trace_time, false, gc_timer, gc_id);
-    phantom_count =  process_discovered_reflist(_discoveredPhantomRefs, NULL, false, is_alive, keep_alive, complete_gc, task_executor);
-
-    phantom_count += process_discovered_reflist(_discoveredCleanerRefs, NULL, false, is_alive, keep_alive, complete_gc, task_executor);
-  }
-
-  {
-    GCTraceTime tt("JNI Weak Reference", trace_time, false, gc_timer, gc_id);
-    if (task_executor != NULL) {
-      task_executor->set_single_threaded_mode();
-    }
-    process_phaseJNI(is_alive, keep_alive, complete_gc);
-  }
-
-  return ReferenceProcessorStats(soft_count, weak_count, final_count, phantom_count);
-}
-
-看到了这个函数里面，分别对刚刚我提到的五个referrance类型变量做处理soft, weak, phantom, final, cleaner，我们只看FinalReference，
-那么进入final_count = process_discovered_reflist(_discoveredFinalRefs, NULL, false, is_alive, keep_alive, complete_gc, task_executor);
-
-
-size_t ReferenceProcessor::process_discovered_reflist(
-  DiscoveredList               refs_lists[],
-  ReferencePolicy*             policy,
-  bool                         clear_referent,
-  BoolObjectClosure*           is_alive,
-  OopClosure*                  keep_alive,
-  VoidClosure*                 complete_gc,
-  AbstractRefProcTaskExecutor* task_executor)
-{
-  bool mt_processing = task_executor != NULL && _processing_is_mt;
-
-  bool must_balance = _discovery_is_mt;
-
-  if ((mt_processing && ParallelRefProcBalancingEnabled) || must_balance) {
-    balance_queues(refs_lists);
-  }
-
-  size_t total_list_count = total_count(refs_lists);
-
-  // Phase 1 (soft refs only):
-  // . Traverse the list and remove any SoftReferences whose
-  //   referents are not alive, but that should be kept alive for
-  //   policy reasons. Keep alive the transitive closure of all
-  //   such referents.
-  if (policy != NULL) {
-    if (mt_processing) {
-      RefProcPhase1Task phase1(*this, refs_lists, policy, true /*marks_oops_alive*/);
-      task_executor->execute(phase1);
-    } else {
-      for (uint i = 0; i < _max_num_q; i++) {
-        process_phase1(refs_lists[i], policy, is_alive, keep_alive, complete_gc);
-      }
-    }
-  }
-
-  // Phase 2:
-  // . Traverse the list and remove any refs whose referents are alive.
-  if (mt_processing) {
-    RefProcPhase2Task phase2(*this, refs_lists, !discovery_is_atomic() /*marks_oops_alive*/);
-    task_executor->execute(phase2);
-  } else {
-    for (uint i = 0; i < _max_num_q; i++) {
-      process_phase2(refs_lists[i], is_alive, keep_alive, complete_gc);
-    }
-  }
-
-  // Phase 3:
-  // . Traverse the list and process referents as appropriate.
-  if (mt_processing) {
-    RefProcPhase3Task phase3(*this, refs_lists, clear_referent, true /*marks_oops_alive*/);
-    task_executor->execute(phase3);
-  } else {
-    for (uint i = 0; i < _max_num_q; i++) {
-      process_phase3(refs_lists[i], clear_referent, is_alive, keep_alive, complete_gc);
-    }
-  }
-
-  return total_list_count;
-}
-
-这里就是对标记阶段发现的引用变量处理，FinalReference只进行Phase 2和3，这里就是特殊处理了，往下就不看了，回头来看在标记阶段是如何发现引用类型变量的呢？
-
-首先要说一下java对象的对象头，任何一个java对象包括刚才的B bubbo = new B();即使里面没有任何字段，jvm也会给它加上两个共8字节的字段：
-
-class oopDesc {
- private:
-  volatile markOop  _mark;
-  union _metadata {
-    Klass*      _klass;
-    narrowKlass _compressed_klass;压缩指针
-  } _metadata;
-
-一个是_mark，不细说了，他就是这个对象的标志，包括锁信息，hashcode，gc活了几代等等。
-
-另一个就是_metadata，他就是我们B bubbo = new B()的bubbo变量的Class实例，也就是_metadata是B.class或者bubbo.getClass()
-
-那么Klass类型是什么呢？看一下他的类型层：
-Klass
-	ArrayKlass
-		ObjArrayKlass   
-		TypeArrayKlass
-	InstanceKlass
-		InstanceClassLoaderKlass
-		InstanceMirrorKlass
-		InstanceRefKlass
-
-看名字我就知道new B()对应的Class对象（B.class）就是一个InstanceKlass,  那么刚刚说到的new B()的同时会建一个FinalReference对象，而FinalReference.class就是InstanceRefKlass
-
-这样的话，很容易就区分一个对象是不是引用类型对象了，只要查看这个对象的_metadata的类型就好了呗，那么回到刚才的
-		所有task加入到那七八个线程里面开始跑，并等待标记结束。
-      	gc_task_manager()->execute_and_wait(q);
-      	
-这里进入一层层的调用会进入到这里,调用栈：
-
-specialized_oop_push_contents<T>(InstanceRefKlass *, PSPromotionManager *, oop) : void
-	InstanceRefKlass::oop_push_contents(PSPromotionManager *, oop) : void (2 matches)
-		oopDesc::push_contents(PSPromotionManager *) : void
-			PSPromotionManager::copy_to_survivor_space(oop) : oop
-				PSScavengeFromKlassClosure::do_oop(oop *) : void
-				
-PSScavengeFromKlassClosure会被另一个closure，PSScavengeKlassClosure引用调用	，那么它的调用栈：	
-
-PSScavengeKlassClosure::do_klass(Klass *) : void
-	ClassLoaderData::classes_do(KlassClosure *) : void
-		ClassLoaderData::oops_do(OopClosure *, KlassClosure *, bool) : void
-			ClassLoaderDataGraph::oops_do(OopClosure *, KlassClosure *, bool) : void
-				ScavengeRootsTask::do_it(GCTaskManager *, uint) : void
-				
-这就是我们刚才在PSScavenge::invoke_no_policy()看到的一个task：ScavengeRootsTask，那它对应的是这条代码：
-
-q->enqueue(new ScavengeRootsTask(ScavengeRootsTask::class_loader_data));
-
-这条代码会从所有Class对象开始，遍历Class类型的所有对象，也包括我们的B.class和FinalReference.class,那么就会把所有B类型的对象和FinalReference类型的对象都找到,当然也会找到刚才创建的那两个对象，
-那么继续看一下specialized_oop_push_contents<T>(InstanceRefKlass *, PSPromotionManager *, oop)是如何发现引用类型变量的:
-
-
-
-而我们的InstanceRefKlass是InstanceKlass的一个子类，那么会调用InstanceRefKlass::oop_push_contents
-		
-代码为：
-void InstanceRefKlass::oop_push_contents(InstanceRefKlass *ref, PSPromotionManager* pm, oop obj) {
-  T* referent_addr = (T*)java_lang_ref_Reference::referent_addr(obj);
-	这里判断这个引用类型是不是需要
-  if (PSScavenge::should_scavenge(referent_addr)) {
-    ReferenceProcessor* rp = PSScavenge::reference_processor();
-    if (rp->discover_reference(obj, ref->reference_type())) {
-      ref->InstanceKlass::oop_push_contents(pm, obj);
-      return;
-    } else {
-      pm->claim_or_forward_depth(referent_addr);
-    }
-  }
-  T* next_addr = (T*)java_lang_ref_Reference::next_addr(obj);
-  if (ReferenceProcessor::pending_list_uses_discovered_field()) {
-    T  next_oop = oopDesc::load_heap_oop(next_addr);
-    if (!oopDesc::is_null(next_oop)) { // i.e. ref is not "active"
-      T* discovered_addr = (T*)java_lang_ref_Reference::discovered_addr(obj);
-      if (PSScavenge::should_scavenge(discovered_addr)) {
-        pm->claim_or_forward_depth(discovered_addr);
-      }
-    }
-  }
-  if (PSScavenge::should_scavenge(next_addr)) {
-    pm->claim_or_forward_depth(next_addr);
-  }
-  ref->InstanceKlass::oop_push_contents(pm, obj);
-}
-
+至此，我们的pending字段被正确塞入了，那么整个处理过程就全都连起来了，然后其实Finalizer的unfinalized字段会在某处把已经执行过finalize()的除掉，怎么除掉？我还没找到，待续。。。。。。;
+我只想说，真tm麻烦。
