@@ -708,4 +708,4 @@ reference_processor()->enqueue_discovered_references(NULL);这句代码真正的
 然后其实Finalizer的unfinalized字段会在某处把已经执行过finalize()的除掉，怎么除掉？我还没找到，待续。。。。。。;
 
 
-我只想说，真tm麻烦。
+我只想说，真tm麻烦，代码方面我也只能看懂模板解释器的，如果是jit编译的代码那必然不是我能看懂的。。。。。
