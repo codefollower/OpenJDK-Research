@@ -50,11 +50,6 @@ if (name == vmSymbols::finalize_method_name() && signature == vmSymbols::void_me
     } else {
       _has_finalizer = true;
     }
-  }
-  if (name == vmSymbols::object_initializer_name() && signature == vmSymbols::void_method_signature() &&  m->is_vanilla_constructor()) {
-    _has_vanilla_constructor = true;
-  }
-   return m;
 }
 
 如上所示，最终jvm解析class文件发现这个class覆盖了finalize()方法，所以将这个Class的_access_flags的has_finalizer标记位赋值为true，
