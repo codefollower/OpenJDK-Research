@@ -43,7 +43,22 @@ JVM_DefineClassWithSource(JNIEnv *, const char *, jobject, const jbyte *, jsize,
 Java_java_lang_ClassLoader_defineClass1(JNIEnv *, jobject, jstring, jbyteArray, jint, jint, jobject, jstring) : jclass
 Java_java_lang_ClassLoader_defineClass0(JNIEnv *, jobject, jstring, jbyteArray, jint, jint, jobject) : jclass
 
+然后重点是这个：
+if (name == vmSymbols::finalize_method_name() && signature == vmSymbols::void_method_signature()) {
+    if (m->is_empty_method()) {
+      _has_empty_finalizer = true;
+    } else {
+      _has_finalizer = true;
+    }
+  }
+  if (name == vmSymbols::object_initializer_name() && signature == vmSymbols::void_method_signature() &&  m->is_vanilla_constructor()) {
+    _has_vanilla_constructor = true;
+  }
+   return m;
+}
+
 如上所示，最终jvm解析class文件发现这个class覆盖了finalize()方法，所以将这个Class的_access_flags的has_finalizer标记位赋值为true，
+只有这个方法不是空方法才可以的，即便有个i ++ 也行；
 这样这个类加载过程对finalzie的特殊处理也就这样了。
 接下来创建这个Class实例的时候，也就是执行java代码:
 
