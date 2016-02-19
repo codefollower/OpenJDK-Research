@@ -341,7 +341,7 @@ jvm在初始化阶段会建七八个thread专门用于处理gc操作
           q->enqueue(new StealTask(&terminator));
         }
       }
-所有task加入到那七八个线程里面开始跑，并等待标记结束。这就是并发标记的过程。
+所有task加入到那七八个线程里面开始跑，并等待标记结束。这就是并发copy的过程。
       gc_task_manager()->execute_and_wait(q);
     }
 接下来是对上面发现的引用类型变量，也包括我们说的java.lang.ref.FinalReference进行特殊处理
