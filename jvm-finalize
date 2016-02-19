@@ -723,6 +723,6 @@ private void runFinalizer(JavaLangAccess jla) {
 	} catch (Throwable x) { }
 	super.clear();
 }
- remove();了喽。。。。
+ remove();了喽。。。。所以java编程思想说呗finalize()一次之后，即便复活也不会再执行finalize了，原因就在这里。
 
 我只想说，真麻烦，代码方面我也只能看懂模板解释器的，如果是jit编译的代码那必然不是我能看懂的。。。。。
