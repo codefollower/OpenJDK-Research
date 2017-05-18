@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<classpath>
-	<classpathentry excluding="**/.svn/**" including="**/*.java|**/*.properties*" kind="src" path="src"/>
-	<classpathentry excluding="**/.svn/**" including="**/*.java" kind="src" path="my-test"/>
-	<classpathentry kind="con" path="org.eclipse.jdt.launching.JRE_CONTAINER"/>
-	<classpathentry kind="output" path="target/classes"/>
-</classpath>

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -37,6 +37,7 @@
 
 int VM_Version::_features = VM_Version::unknown_m;
 const char* VM_Version::_features_str = "";
+unsigned int VM_Version::_L2_cache_line_size = 0;
 
 void VM_Version::initialize() {
   _features = determine_features();
@@ -197,7 +198,7 @@ void VM_Version::initialize() {
   }
 
   assert(BlockZeroingLowLimit > 0, "invalid value");
-  if (has_block_zeroing()) {
+  if (has_block_zeroing() && cache_line_size > 0) {
     if (FLAG_IS_DEFAULT(UseBlockZeroing)) {
       FLAG_SET_DEFAULT(UseBlockZeroing, true);
     }
@@ -207,7 +208,7 @@ void VM_Version::initialize() {
   }
 
   assert(BlockCopyLowLimit > 0, "invalid value");
-  if (has_block_zeroing()) { // has_blk_init() && is_T4(): core's local L2 cache
+  if (has_block_zeroing() && cache_line_size > 0) { // has_blk_init() && is_T4(): core's local L2 cache
     if (FLAG_IS_DEFAULT(UseBlockCopy)) {
       FLAG_SET_DEFAULT(UseBlockCopy, true);
     }
@@ -234,7 +235,7 @@ void VM_Version::initialize() {
   assert((OptoLoopAlignment % relocInfo::addr_unit()) == 0, "alignment is not a multiple of NOP size");
 
   char buf[512];
-  jio_snprintf(buf, sizeof(buf), "%s%s%s%s%s%s%s%s%s%s%s%s%s%s",
+  jio_snprintf(buf, sizeof(buf), "%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s%s",
                (has_v9() ? ", v9" : (has_v8() ? ", v8" : "")),
                (has_hardware_popc() ? ", popc" : ""),
                (has_vis1() ? ", vis1" : ""),
@@ -242,6 +243,10 @@ void VM_Version::initialize() {
                (has_vis3() ? ", vis3" : ""),
                (has_blk_init() ? ", blk_init" : ""),
                (has_cbcond() ? ", cbcond" : ""),
+               (has_aes() ? ", aes" : ""),
+               (has_sha1() ? ", sha1" : ""),
+               (has_sha256() ? ", sha256" : ""),
+               (has_sha512() ? ", sha512" : ""),
                (is_ultra3() ? ", ultra3" : ""),
                (is_sun4v() ? ", sun4v" : ""),
                (is_niagara_plus() ? ", niagara_plus" : (is_niagara() ? ", niagara" : "")),
@@ -265,12 +270,100 @@ void VM_Version::initialize() {
   if (!has_vis1()) // Drop to 0 if no VIS1 support
     UseVIS = 0;
 
+  // SPARC T4 and above should have support for AES instructions
+  if (has_aes()) {
+    if (UseVIS > 2) { // AES intrinsics use MOVxTOd/MOVdTOx which are VIS3
+      if (FLAG_IS_DEFAULT(UseAES)) {
+        FLAG_SET_DEFAULT(UseAES, true);
+      }
+      if (FLAG_IS_DEFAULT(UseAESIntrinsics)) {
+        FLAG_SET_DEFAULT(UseAESIntrinsics, true);
+      }
+      // we disable both the AES flags if either of them is disabled on the command line
+      if (!UseAES || !UseAESIntrinsics) {
+        FLAG_SET_DEFAULT(UseAES, false);
+        FLAG_SET_DEFAULT(UseAESIntrinsics, false);
+      }
+    } else {
+        if (UseAES || UseAESIntrinsics) {
+          warning("SPARC AES intrinsics require VIS3 instruction support. Intrinsics will be disabled.");
+          if (UseAES) {
+            FLAG_SET_DEFAULT(UseAES, false);
+          }
+          if (UseAESIntrinsics) {
+            FLAG_SET_DEFAULT(UseAESIntrinsics, false);
+          }
+        }
+    }
+  } else if (UseAES || UseAESIntrinsics) {
+    warning("AES instructions are not available on this CPU");
+    if (UseAES) {
+      FLAG_SET_DEFAULT(UseAES, false);
+    }
+    if (UseAESIntrinsics) {
+      FLAG_SET_DEFAULT(UseAESIntrinsics, false);
+    }
+  }
+
+  // SHA1, SHA256, and SHA512 instructions were added to SPARC T-series at different times
+  if (has_sha1() || has_sha256() || has_sha512()) {
+    if (UseVIS > 0) { // SHA intrinsics use VIS1 instructions
+      if (FLAG_IS_DEFAULT(UseSHA)) {
+        FLAG_SET_DEFAULT(UseSHA, true);
+      }
+    } else {
+      if (UseSHA) {
+        warning("SPARC SHA intrinsics require VIS1 instruction support. Intrinsics will be disabled.");
+        FLAG_SET_DEFAULT(UseSHA, false);
+      }
+    }
+  } else if (UseSHA) {
+    warning("SHA instructions are not available on this CPU");
+    FLAG_SET_DEFAULT(UseSHA, false);
+  }
+
+  if (!UseSHA) {
+    FLAG_SET_DEFAULT(UseSHA1Intrinsics, false);
+    FLAG_SET_DEFAULT(UseSHA256Intrinsics, false);
+    FLAG_SET_DEFAULT(UseSHA512Intrinsics, false);
+  } else {
+    if (has_sha1()) {
+      if (FLAG_IS_DEFAULT(UseSHA1Intrinsics)) {
+        FLAG_SET_DEFAULT(UseSHA1Intrinsics, true);
+      }
+    } else if (UseSHA1Intrinsics) {
+      warning("SHA1 instruction is not available on this CPU.");
+      FLAG_SET_DEFAULT(UseSHA1Intrinsics, false);
+    }
+    if (has_sha256()) {
+      if (FLAG_IS_DEFAULT(UseSHA256Intrinsics)) {
+        FLAG_SET_DEFAULT(UseSHA256Intrinsics, true);
+      }
+    } else if (UseSHA256Intrinsics) {
+      warning("SHA256 instruction (for SHA-224 and SHA-256) is not available on this CPU.");
+      FLAG_SET_DEFAULT(UseSHA256Intrinsics, false);
+    }
+
+    if (has_sha512()) {
+      if (FLAG_IS_DEFAULT(UseSHA512Intrinsics)) {
+        FLAG_SET_DEFAULT(UseSHA512Intrinsics, true);
+      }
+    } else if (UseSHA512Intrinsics) {
+      warning("SHA512 instruction (for SHA-384 and SHA-512) is not available on this CPU.");
+      FLAG_SET_DEFAULT(UseSHA512Intrinsics, false);
+    }
+    if (!(UseSHA1Intrinsics || UseSHA256Intrinsics || UseSHA512Intrinsics)) {
+      FLAG_SET_DEFAULT(UseSHA, false);
+    }
+  }
+
   if (FLAG_IS_DEFAULT(ContendedPaddingWidth) &&
     (cache_line_size > ContendedPaddingWidth))
     ContendedPaddingWidth = cache_line_size;
 
 #ifndef PRODUCT
   if (PrintMiscellaneous && Verbose) {
+    tty->print_cr("L2 cache line size: %u", L2_cache_line_size());
     tty->print("Allocation");
     if (AllocatePrefetchStyle <= 0) {
       tty->print_cr(": no prefetching");
@@ -282,22 +375,22 @@ void VM_Version::initialize() {
           tty->print("BIS");
       }
       if (AllocatePrefetchLines > 1) {
-        tty->print_cr(" at distance %d, %d lines of %d bytes", AllocatePrefetchDistance, AllocatePrefetchLines, AllocatePrefetchStepSize);
+        tty->print_cr(" at distance %d, %d lines of %d bytes", (int) AllocatePrefetchDistance, (int) AllocatePrefetchLines, (int) AllocatePrefetchStepSize);
       } else {
-        tty->print_cr(" at distance %d, one line of %d bytes", AllocatePrefetchDistance, AllocatePrefetchStepSize);
+        tty->print_cr(" at distance %d, one line of %d bytes", (int) AllocatePrefetchDistance, (int) AllocatePrefetchStepSize);
       }
     }
     if (PrefetchCopyIntervalInBytes > 0) {
-      tty->print_cr("PrefetchCopyIntervalInBytes %d", PrefetchCopyIntervalInBytes);
+      tty->print_cr("PrefetchCopyIntervalInBytes %d", (int) PrefetchCopyIntervalInBytes);
     }
     if (PrefetchScanIntervalInBytes > 0) {
-      tty->print_cr("PrefetchScanIntervalInBytes %d", PrefetchScanIntervalInBytes);
+      tty->print_cr("PrefetchScanIntervalInBytes %d", (int) PrefetchScanIntervalInBytes);
     }
     if (PrefetchFieldsAhead > 0) {
-      tty->print_cr("PrefetchFieldsAhead %d", PrefetchFieldsAhead);
+      tty->print_cr("PrefetchFieldsAhead %d", (int) PrefetchFieldsAhead);
     }
     if (ContendedPaddingWidth > 0) {
-      tty->print_cr("ContendedPaddingWidth %d", ContendedPaddingWidth);
+      tty->print_cr("ContendedPaddingWidth %d", (int) ContendedPaddingWidth);
     }
   }
 #endif // PRODUCT

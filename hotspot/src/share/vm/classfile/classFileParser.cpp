@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -31,6 +31,9 @@
 #include "classfile/javaClasses.hpp"
 #include "classfile/symbolTable.hpp"
 #include "classfile/systemDictionary.hpp"
+#if INCLUDE_CDS
+#include "classfile/systemDictionaryShared.hpp"
+#endif
 #include "classfile/verificationType.hpp"
 #include "classfile/verifier.hpp"
 #include "classfile/vmSymbols.hpp"
@@ -60,6 +63,7 @@
 #include "services/threadService.hpp"
 #include "utilities/array.hpp"
 #include "utilities/globalDefinitions.hpp"
+#include "utilities/ostream.hpp"
 
 // We generally try to create the oops directly when parsing, rather than
 // allocating temporary data structures and copying the bytes twice. A
@@ -112,8 +116,6 @@ void ClassFileParser::parse_constant_pool_entries(int length, TRAPS) {
   unsigned int hashValues[SymbolTable::symbol_alloc_batch_size];
   int names_count = 0;
 
-  //可以通过类似javap -v java.lang.Object这样的命令来打印出常量池，然后对比下面的代码
-  //同时参考<<jvms8>>的第4节: The class File Format
   // parsing  Index 0 is unused
   for (int index = 1; index < length; index++) {
     // Each of the following case guarantees one more byte in the stream
@@ -121,12 +123,8 @@ void ClassFileParser::parse_constant_pool_entries(int length, TRAPS) {
     // so we don't need bounds-check for reading tag.
     u1 tag = cfs->get_u1_fast();
     switch (tag) {
-	//总共14个tag，
-	//除了MethodHandle、MethodType、InvokeDynamic
-	//基本上按<<jvms8>>中的小节顺序来定case的先后
       case JVM_CONSTANT_Class :
         {
-          //下面的guarantee_more总是多一个字节
           cfs->guarantee_more(3, CHECK);  // name_index, tag/access_flags
           u2 name_index = cfs->get_u2_fast();
           _cp->klass_index_at_put(index, name_index);
@@ -256,7 +254,6 @@ void ClassFileParser::parse_constant_pool_entries(int length, TRAPS) {
         break;
       case JVM_CONSTANT_Utf8 :
         {
-          //这里没有多加1，get_u1_buffer()没有改变流的位置
           cfs->guarantee_more(2, CHECK);  // utf8_length
           u2  utf8_length = cfs->get_u2_fast();
           u1* utf8_buffer = cfs->get_u1_buffer();
@@ -331,7 +328,6 @@ constantPoolHandle ClassFileParser::parse_constant_pool(TRAPS) {
 
   cfs->guarantee_more(3, CHECK_(nullHandle)); // length, first cp tag
   u2 length = cfs->get_u2_fast();
-  //因为0号下标默认是被保留的，所以常量池的条目数至少有一个
   guarantee_property(
     length >= 1, "Illegal constant pool size %u in class file %s",
     length, CHECK_(nullHandle));
@@ -346,8 +342,6 @@ constantPoolHandle ClassFileParser::parse_constant_pool(TRAPS) {
   int index = 1;  // declared outside of loops for portability
 
   // first verification pass - validate cross references and fixup class and string constants
-  //检查常量池索引指向的类型是否正确，
-  //比如JVM_CONSTANT_Fieldref的class_index必须是JVM_CONSTANT_Class
   for (index = 1; index < length; index++) {          // Index 0 is unused
     jbyte tag = cp->tag_at(index).value();
     switch (tag) {
@@ -427,8 +421,6 @@ constantPoolHandle ClassFileParser::parse_constant_pool(TRAPS) {
         break;
       case JVM_CONSTANT_MethodHandle :
         {
-          //对应<<jvms8>>4.4.8 The CONSTANT_MethodHandle_info Structure，
-          //不包含该小节中最后两段文字，而是在下面的第二个验证阶段处理
           int ref_index = cp->method_handle_index_at(index);
           check_property(
             valid_cp_range(ref_index, length) &&
@@ -516,7 +508,6 @@ constantPoolHandle ClassFileParser::parse_constant_pool(TRAPS) {
 
     for (index = 1; index < length; index++) {          // Index 0 is unused
       if (has_cp_patch_at(index)) {
-    	//不能是this_class指向的常量池索引
         guarantee_property(index != this_class_index,
                            "Illegal constant pool patch to self at %d in class file %s",
                            index, CHECK_(nullHandle));
@@ -606,8 +597,6 @@ constantPoolHandle ClassFileParser::parse_constant_pool(TRAPS) {
         break;
       }
       case JVM_CONSTANT_MethodHandle: {
-    	//对应<<jvms8>>4.4.8 The CONSTANT_MethodHandle_info Structure最后两段文字，
-    	//但是跟规范有出入，少了REF_invokeInterface)，没有处理<clinit>
         int ref_index = cp->method_handle_index_at(index);
         int ref_kind  = cp->method_handle_ref_kind_at(index);
         switch (ref_kind) {
@@ -626,7 +615,7 @@ constantPoolHandle ClassFileParser::parse_constant_pool(TRAPS) {
                   name_ref_index, CHECK_(nullHandle));
               }
             } else {
-              if (name == vmSymbols::object_initializer_name()) { //应该多加个" || vmSymbols::class_initializer_name()"
+              if (name == vmSymbols::object_initializer_name()) {
                 classfile_parse_error(
                   "Bad method name at constant pool index %u in class file %s",
                   name_ref_index, CHECK_(nullHandle));
@@ -946,7 +935,7 @@ void ClassFileParser::parse_field_attributes(u2 attributes_count,
             "Wrong size %u for field's Signature attribute in class file %s",
             attribute_length, CHECK);
         }
-        generic_signature_index = cfs->get_u2(CHECK);
+        generic_signature_index = parse_generic_signature_attribute(CHECK);
       } else if (attribute_name == vmSymbols::tag_runtime_visible_annotations()) {
         runtime_visible_annotations_length = attribute_length;
         runtime_visible_annotations = cfs->get_u1_buffer();
@@ -1106,7 +1095,6 @@ Array<u2>* ClassFileParser::parse_fields(Symbol* class_name,
   *java_fields_count_ptr = length;
 
   int num_injected = 0;
-  //目前只有3个类有注入字段: java.lang.Class、java.lang.ClassLoader、java.lang.invoke.MemberName
   InjectedField* injected = JavaClasses::get_injected(class_name, &num_injected);
   int total_fields = length + num_injected;
 
@@ -1131,7 +1119,6 @@ Array<u2>* ClassFileParser::parse_fields(Symbol* class_name,
   // index. After parsing all fields, the data are copied to a permanent
   // array and any unused slots will be discarded.
   ResourceMark rm(THREAD);
-  //加1是为了放generic signature index
   u2* fa = NEW_RESOURCE_ARRAY_IN_THREAD(
              THREAD, u2, total_fields * (FieldInfo::field_slots + 1));
 
@@ -1167,17 +1154,6 @@ Array<u2>* ClassFileParser::parse_fields(Symbol* class_name,
     u2 generic_signature_index = 0;
     bool is_static = access_flags.is_static();
     FieldAnnotationCollector parsed_annotations(_loader_data);
-
-    //<<jvms8>>的Table 4.7-C中预定义了各种属性，
-    //字段级别的属性有8个:
-    //ConstantValue
-    //Synthetic
-    //Deprecated
-    //Signature
-    //RuntimeVisibleAnnotations,
-    //RuntimeInvisibleAnnotations
-    //RuntimeVisibleTypeAnnotations,
-    //RuntimeInvisibleTypeAnnotations
 
     u2 attributes_count = cfs->get_u2_fast();
     if (attributes_count > 0) {
@@ -1354,7 +1330,7 @@ u2* ClassFileParser::parse_exception_table(u4 code_length,
       }
     }
   } else {
-    cfs->skip_u2_fast(exception_table_length * 4); //为什么不乘以8？因为用了skip_u2_fast，而skip_u2_fast里已经乘以2了
+    cfs->skip_u2_fast(exception_table_length * 4);
   }
   return exception_table_start;
 }
@@ -2039,7 +2015,7 @@ methodHandle ClassFileParser::parse_method(bool is_interface,
   Symbol*  signature = _cp->symbol_at(signature_index);
 
   AccessFlags access_flags;
-  if (name == vmSymbols::class_initializer_name()) { //是否是静态初始化方法:<clinit>
+  if (name == vmSymbols::class_initializer_name()) {
     // We ignore the other access flags for a valid class initializer.
     // (JVM Spec 2nd ed., chapter 4.6)
     if (_major_version < 51) { // backward compatibility
@@ -2111,29 +2087,6 @@ methodHandle ClassFileParser::parse_method(bool is_interface,
   u1* annotation_default = NULL;
   int annotation_default_length = 0;
 
-  //<<jvms8>>的Table 4.7-C中预定义了各种属性，
-  //方法级别的属性有13个:
-	//  Code
-	//  Exceptions
-	//  AnnotationDefault
-	//  MethodParameters
-	//  Synthetic
-	//  Deprecated
-	//  Signature
-	//
-	//  RuntimeVisibleParameterAnnotations,
-	//  RuntimeInvisibleParameterAnnotations
-	//  RuntimeVisibleAnnotations,
-	//  RuntimeInvisibleAnnotations
-	//  RuntimeVisibleTypeAnnotations,
-	//  RuntimeInvisibleTypeAnnotations
-	//
-	//  Code级别的属性有4个:
-	//  LineNumberTable
-	//  LocalVariableTable
-	//  LocalVariableTypeTable
-	//  StackMapTable
-
   // Parse code and exceptions attribute
   u2 method_attributes_count = cfs->get_u2_fast();
   while (method_attributes_count--) {
@@ -2149,7 +2102,6 @@ methodHandle ClassFileParser::parse_method(bool is_interface,
     if (method_attribute_name == vmSymbols::tag_code()) {
       // Parse Code attribute
       if (_need_verify) {
-    	//native和abstract方法都不能带Code属性
         guarantee_property(
             !access_flags.is_native() && !access_flags.is_abstract(),
                         "Code attribute in native or abstract methods in class file %s",
@@ -2161,7 +2113,7 @@ methodHandle ClassFileParser::parse_method(bool is_interface,
       parsed_code_attribute = true;
 
       // Stack size, locals size, and code size
-      if (_major_version == 45 && _minor_version <= 2) { //JDK 1.0.2之前的版本，从1.0.2开始的classfile版本号是45.3
+      if (_major_version == 45 && _minor_version <= 2) {
         cfs->guarantee_more(4, CHECK_(nullHandle));
         max_stack = cfs->get_u1_fast();
         max_locals = cfs->get_u1_fast();
@@ -2197,7 +2149,7 @@ methodHandle ClassFileParser::parse_method(bool is_interface,
       cfs->guarantee_more(2, CHECK_(nullHandle));  // code_attributes_count
       u2 code_attributes_count = cfs->get_u2_fast();
 
-      unsigned int calculated_attribute_length = 0; //已经计算的长度，用于验证
+      unsigned int calculated_attribute_length = 0;
 
       if (_major_version > 45 || (_major_version == 45 && _minor_version > 2)) {
         calculated_attribute_length =
@@ -2206,8 +2158,6 @@ methodHandle ClassFileParser::parse_method(bool is_interface,
         // max_stack, locals and length are smaller in pre-version 45.2 classes
         calculated_attribute_length = sizeof(u1) + sizeof(u1) + sizeof(u2);
       }
-      //method_attribute_length - calculated_attribute_length后的长度
-      //就是attribute_info attributes[attributes_count]那一部分的总长度
       calculated_attribute_length +=
         code_length +
         sizeof(exception_table_length) +
@@ -2359,8 +2309,7 @@ methodHandle ClassFileParser::parse_method(bool is_interface,
             "Invalid Signature attribute length %u in class file %s",
             method_attribute_length, CHECK_(nullHandle));
         }
-        cfs->guarantee_more(2, CHECK_(nullHandle));  // generic_signature_index
-        generic_signature_index = cfs->get_u2_fast();
+        generic_signature_index = parse_generic_signature_attribute(CHECK_(nullHandle));
       } else if (method_attribute_name == vmSymbols::tag_runtime_visible_annotations()) {
         runtime_visible_annotations_length = method_attribute_length;
         runtime_visible_annotations = cfs->get_u1_buffer();
@@ -2580,7 +2529,7 @@ methodHandle ClassFileParser::parse_method(bool is_interface,
 Array<Method*>* ClassFileParser::parse_methods(bool is_interface,
                                                AccessFlags* promoted_flags,
                                                bool* has_final_method,
-                                               bool* has_default_methods,
+                                               bool* declares_default_methods,
                                                TRAPS) {
   ClassFileStream* cfs = stream();
   cfs->guarantee_more(2, CHECK_NULL);  // length
@@ -2599,11 +2548,11 @@ Array<Method*>* ClassFileParser::parse_methods(bool is_interface,
       if (method->is_final()) {
         *has_final_method = true;
       }
-      if (is_interface && !(*has_default_methods)
-        && !method->is_abstract() && !method->is_static()
-        && !method->is_private()) {
-        // default method
-        *has_default_methods = true;
+      // declares_default_methods: declares concrete instance methods, any access flags
+      // used for interface initialization, and default method inheritance analysis
+      if (is_interface && !(*declares_default_methods)
+        && !method->is_abstract() && !method->is_static()) {
+        *declares_default_methods = true;
       }
       _methods->at_put(index, method());
     }
@@ -2670,6 +2619,17 @@ intArray* ClassFileParser::sort_methods(Array<Method*>* methods) {
   return method_ordering;
 }
 
+// Parse generic_signature attribute for methods and fields
+u2 ClassFileParser::parse_generic_signature_attribute(TRAPS) {
+  ClassFileStream* cfs = stream();
+  cfs->guarantee_more(2, CHECK_0);  // generic_signature_index
+  u2 generic_signature_index = cfs->get_u2_fast();
+  check_property(
+    valid_symbol_at(generic_signature_index),
+    "Invalid Signature attribute at constant pool index %u in class file %s",
+    generic_signature_index, CHECK_0);
+  return generic_signature_index;
+}
 
 void ClassFileParser::parse_classfile_sourcefile_attribute(TRAPS) {
   ClassFileStream* cfs = stream();
@@ -2824,7 +2784,13 @@ void ClassFileParser::parse_classfile_bootstrap_methods_attribute(u4 attribute_b
   ClassFileStream* cfs = stream();
   u1* current_start = cfs->current();
 
-  cfs->guarantee_more(2, CHECK);  // length
+  guarantee_property(attribute_byte_length >= sizeof(u2),
+                     "Invalid BootstrapMethods attribute length %u in class file %s",
+                     attribute_byte_length,
+                     CHECK);
+
+  cfs->guarantee_more(attribute_byte_length, CHECK);
+
   int attribute_array_length = cfs->get_u2_fast();
 
   guarantee_property(_max_bootstrap_specifier_index < attribute_array_length,
@@ -2864,6 +2830,11 @@ void ClassFileParser::parse_classfile_bootstrap_methods_attribute(u4 attribute_b
       "bootstrap_method_index %u has bad constant type in class file %s",
       bootstrap_method_index,
       CHECK);
+
+    guarantee_property((operand_fill_index + 1 + argument_count) < operands->length(),
+      "Invalid BootstrapMethods num_bootstrap_methods or num_bootstrap_arguments value in class file %s",
+      CHECK);
+
     operands->at_put(operand_fill_index++, bootstrap_method_index);
     operands->at_put(operand_fill_index++, argument_count);
 
@@ -2881,7 +2852,6 @@ void ClassFileParser::parse_classfile_bootstrap_methods_attribute(u4 attribute_b
   }
 
   assert(operand_fill_index == operands->length(), "exact fill");
-  assert(ConstantPool::operand_array_length(operands) == attribute_array_length, "correct decode");
 
   u1* current_end = cfs->current();
   guarantee_property(current_end == current_start + attribute_byte_length,
@@ -2889,21 +2859,6 @@ void ClassFileParser::parse_classfile_bootstrap_methods_attribute(u4 attribute_b
                      CHECK);
 }
 
-//<<jvms8>>的Table 4.7-C中预定义了各种属性
-//ClassFile级别的属性有12个:
-	//  SourceFile
-	//  InnerClasses
-	//  EnclosingMethod
-	//  SourceDebugExtension
-	//  BootstrapMethods
-	//  Synthetic
-	//  Deprecated
-	//  Signature
-	//
-	//  RuntimeVisibleAnnotations,
-	//  RuntimeInvisibleAnnotations
-	//  RuntimeVisibleTypeAnnotations,
-	//  RuntimeInvisibleTypeAnnotations
 void ClassFileParser::parse_classfile_attributes(ClassFileParser::ClassAnnotationCollector* parsed_annotations,
                                                  TRAPS) {
   ClassFileStream* cfs = stream();
@@ -3103,21 +3058,39 @@ void ClassFileParser::apply_parsed_class_attributes(instanceKlassHandle k) {
   }
 }
 
-// Transfer ownership of metadata allocated to the InstanceKlass.
-void ClassFileParser::apply_parsed_class_metadata(
-                                            instanceKlassHandle this_klass,
-                                            int java_fields_count, TRAPS) {
-  // Assign annotations if needed
-  if (_annotations != NULL || _type_annotations != NULL ||
-      _fields_annotations != NULL || _fields_type_annotations != NULL) {
+// Create the Annotations object that will
+// hold the annotations array for the Klass.
+void ClassFileParser::create_combined_annotations(TRAPS) {
+    if (_annotations == NULL &&
+        _type_annotations == NULL &&
+        _fields_annotations == NULL &&
+        _fields_type_annotations == NULL) {
+      // Don't create the Annotations object unnecessarily.
+      return;
+    }
+
     Annotations* annotations = Annotations::allocate(_loader_data, CHECK);
     annotations->set_class_annotations(_annotations);
     annotations->set_class_type_annotations(_type_annotations);
     annotations->set_fields_annotations(_fields_annotations);
     annotations->set_fields_type_annotations(_fields_type_annotations);
-    this_klass->set_annotations(annotations);
-  }
 
+    // This is the Annotations object that will be
+    // assigned to InstanceKlass being constructed.
+    _combined_annotations = annotations;
+
+    // The annotations arrays below has been transfered the
+    // _combined_annotations so these fields can now be cleared.
+    _annotations             = NULL;
+    _type_annotations        = NULL;
+    _fields_annotations      = NULL;
+    _fields_type_annotations = NULL;
+}
+
+// Transfer ownership of metadata allocated to the InstanceKlass.
+void ClassFileParser::apply_parsed_class_metadata(
+                                            instanceKlassHandle this_klass,
+                                            int java_fields_count, TRAPS) {
   _cp->set_pool_holder(this_klass());
   this_klass->set_constants(_cp);
   this_klass->set_fields(_fields, java_fields_count);
@@ -3125,6 +3098,7 @@ void ClassFileParser::apply_parsed_class_metadata(
   this_klass->set_inner_classes(_inner_classes);
   this_klass->set_local_interfaces(_local_interfaces);
   this_klass->set_transitive_interfaces(_transitive_interfaces);
+  this_klass->set_annotations(_combined_annotations);
 
   // Clear out these fields so they don't get deallocated by the destructor
   clear_class_metadata();
@@ -3736,6 +3710,7 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
   JvmtiCachedClassFileData *cached_class_file = NULL;
   Handle class_loader(THREAD, loader_data->class_loader());
   bool has_default_methods = false;
+  bool declares_default_methods = false;
   ResourceMark rm(THREAD);
 
   ClassFileStream* cfs = stream();
@@ -3790,7 +3765,15 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
   instanceKlassHandle nullHandle;
 
   // Figure out whether we can skip format checking (matching classic VM behavior)
-  _need_verify = Verifier::should_verify_for(class_loader(), verify);
+  if (DumpSharedSpaces) {
+    // verify == true means it's a 'remote' class (i.e., non-boot class)
+    // Verification decision is based on BytecodeVerificationRemote flag
+    // for those classes.
+    _need_verify = (verify) ? BytecodeVerificationRemote :
+                              BytecodeVerificationLocal;
+  } else {
+    _need_verify = Verifier::should_verify_for(class_loader(), verify);
+  }
 
   // Set the verify flag in stream
   cfs->set_verify(_need_verify);
@@ -3798,7 +3781,6 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
   // Save the class file name for easier error message printing.
   _class_name = (name != NULL) ? name : vmSymbols::unknown_class_name();
 
-  //剩余大小必须>=8
   cfs->guarantee_more(8, CHECK_(nullHandle));  // magic, major, minor
   // Magic value
   u4 magic = cfs->get_u4_fast();
@@ -3810,24 +3792,42 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
   u2 minor_version = cfs->get_u2_fast();
   u2 major_version = cfs->get_u2_fast();
 
+  if (DumpSharedSpaces && major_version < JAVA_1_5_VERSION) {
+    ResourceMark rm;
+    warning("Pre JDK 1.5 class not supported by CDS: %u.%u %s",
+            major_version,  minor_version, name->as_C_string());
+    Exceptions::fthrow(
+      THREAD_AND_LOCATION,
+      vmSymbols::java_lang_UnsupportedClassVersionError(),
+      "Unsupported major.minor version for dump time %u.%u",
+      major_version,
+      minor_version);
+  }
+
   // Check version numbers - we check this even with verifier off
   if (!is_supported_version(major_version, minor_version)) {
     if (name == NULL) {
       Exceptions::fthrow(
         THREAD_AND_LOCATION,
         vmSymbols::java_lang_UnsupportedClassVersionError(),
-        "Unsupported major.minor version %u.%u",
+        "Unsupported class file version %u.%u, "
+        "this version of the Java Runtime only recognizes class file versions up to %u.%u",
         major_version,
-        minor_version);
+        minor_version,
+        JAVA_MAX_SUPPORTED_VERSION,
+        JAVA_MAX_SUPPORTED_MINOR_VERSION);
     } else {
       ResourceMark rm(THREAD);
       Exceptions::fthrow(
         THREAD_AND_LOCATION,
         vmSymbols::java_lang_UnsupportedClassVersionError(),
-        "%s : Unsupported major.minor version %u.%u",
+        "%s has been compiled by a more recent version of the Java Runtime (class file version %u.%u), "
+        "this version of the Java Runtime only recognizes class file versions up to %u.%u",
         name->as_C_string(),
         major_version,
-        minor_version);
+        minor_version,
+        JAVA_MAX_SUPPORTED_VERSION,
+        JAVA_MAX_SUPPORTED_MINOR_VERSION);
     }
     return nullHandle;
   }
@@ -3871,7 +3871,7 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
 
   // It's important to set parsed_name *before* resolving the super class.
   // (it's used for cleanup by the caller if parsing fails)
-  parsed_name = class_name; //光是这一条语句就会触发TempNewSymbol(Symbol *s)、operator=、~TempNewSymbol()
+  parsed_name = class_name;
   // parsed_name is returned and can be used if there's an error, so add to
   // its reference count.  Caller will decrement the refcount.
   parsed_name->increment_refcount();
@@ -3911,6 +3911,18 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
       if (cfs->source() != NULL) tty->print(" from %s", cfs->source());
       tty->print_cr("]");
     }
+#if INCLUDE_CDS
+    if (DumpLoadedClassList != NULL && cfs->source() != NULL && classlist_file->is_open()) {
+      // Only dump the classes that can be stored into CDS archive
+      if (SystemDictionaryShared::is_sharing_possible(loader_data)) {
+        if (name != NULL) {
+          ResourceMark rm(THREAD);
+          classlist_file->print_cr("%s", name->as_C_string());
+          classlist_file->flush();
+        }
+      }
+    }
+#endif
 
     u2 super_class_index = cfs->get_u2_fast();
     instanceKlassHandle super_klass = parse_super_class(super_class_index,
@@ -3936,12 +3948,19 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
     Array<Method*>* methods = parse_methods(access_flags.is_interface(),
                                             &promoted_flags,
                                             &has_final_method,
-                                            &has_default_methods,
+                                            &declares_default_methods,
                                             CHECK_(nullHandle));
+    if (declares_default_methods) {
+      has_default_methods = true;
+    }
 
     // Additional attributes
     ClassAnnotationCollector parsed_annotations;
     parse_classfile_attributes(&parsed_annotations, CHECK_(nullHandle));
+
+    // Finalize the Annotations metadata object,
+    // now that all annotation arrays have been created.
+    create_combined_annotations(CHECK_(nullHandle));
 
     // Make sure this is the end of class file stream
     guarantee_property(cfs->at_eos(), "Extra bytes at the end of class file %s", CHECK_(nullHandle));
@@ -4080,6 +4099,12 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
     this_klass->set_minor_version(minor_version);
     this_klass->set_major_version(major_version);
     this_klass->set_has_default_methods(has_default_methods);
+    this_klass->set_declares_default_methods(declares_default_methods);
+
+    if (!host_klass.is_null()) {
+      assert (this_klass->is_anonymous(), "should be the same");
+      this_klass->set_host_klass(host_klass());
+    }
 
     // Set up Method*::intrinsic_id as soon as we know the names of methods.
     // (We used to do this lazily, but now we query it in Rewriter,
@@ -4145,8 +4170,8 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
     }
 
     // Allocate mirror and initialize static fields
-    java_lang_Class::create_mirror(this_klass, protection_domain, CHECK_(nullHandle));
-
+    java_lang_Class::create_mirror(this_klass, class_loader, protection_domain,
+                                   CHECK_(nullHandle));
 
     // Generate any default methods - default methods are interface methods
     // that have a default implementation.  This is new with Lambda project.
@@ -4168,8 +4193,12 @@ instanceKlassHandle ClassFileParser::parseClassFile(Symbol* name,
         tty->print("[Loaded %s from %s]\n", this_klass->external_name(),
                    cfs->source());
       } else if (class_loader.is_null()) {
-        if (THREAD->is_Java_thread()) {
-          Klass* caller = ((JavaThread*)THREAD)->security_get_caller_class(1);
+        Klass* caller =
+            THREAD->is_Java_thread()
+                ? ((JavaThread*)THREAD)->security_get_caller_class(1)
+                : NULL;
+        // caller can be NULL, for example, during a JVMTI VM_Init hook
+        if (caller != NULL) {
           tty->print("[Loaded %s by instance of %s]\n",
                      this_klass->external_name(),
                      InstanceKlass::cast(caller)->external_name());
@@ -4233,15 +4262,36 @@ ClassFileParser::~ClassFileParser() {
   InstanceKlass::deallocate_interfaces(_loader_data, _super_klass(),
                                        _local_interfaces, _transitive_interfaces);
 
-  MetadataFactory::free_array<u1>(_loader_data, _annotations);
-  MetadataFactory::free_array<u1>(_loader_data, _type_annotations);
-  Annotations::free_contents(_loader_data, _fields_annotations);
-  Annotations::free_contents(_loader_data, _fields_type_annotations);
+  if (_combined_annotations != NULL) {
+    // After all annotations arrays have been created, they are installed into the
+    // Annotations object that will be assigned to the InstanceKlass being created.
+
+    // Deallocate the Annotations object and the installed annotations arrays.
+    _combined_annotations->deallocate_contents(_loader_data);
+
+    // If the _combined_annotations pointer is non-NULL,
+    // then the other annotations fields should have been cleared.
+    assert(_annotations             == NULL, "Should have been cleared");
+    assert(_type_annotations        == NULL, "Should have been cleared");
+    assert(_fields_annotations      == NULL, "Should have been cleared");
+    assert(_fields_type_annotations == NULL, "Should have been cleared");
+  } else {
+    // If the annotations arrays were not installed into the Annotations object,
+    // then they have to be deallocated explicitly.
+    MetadataFactory::free_array<u1>(_loader_data, _annotations);
+    MetadataFactory::free_array<u1>(_loader_data, _type_annotations);
+    Annotations::free_contents(_loader_data, _fields_annotations);
+    Annotations::free_contents(_loader_data, _fields_type_annotations);
+  }
 
   clear_class_metadata();
 
-  // deallocate the klass if already created.
-  MetadataFactory::free_metadata(_loader_data, _klass);
+  // deallocate the klass if already created.  Don't directly deallocate, but add
+  // to the deallocate list so that the klass is removed from the CLD::_klasses list
+  // at a safepoint.
+  if (_klass != NULL) {
+    _loader_data->add_to_deallocate_list(_klass);
+  }
   _klass = NULL;
 }
 
@@ -4448,7 +4498,6 @@ void append_interfaces(GrowableArray<Klass*>* result, Array<Klass*>* ifs) {
   }
 }
 
-//返回类实现的所有接口，包括直接实现的接口、所有超类实现的接口、接口本身继承的接口，重复的接口不计入
 Array<Klass*>* ClassFileParser::compute_transitive_interfaces(
                                         instanceKlassHandle super,
                                         Array<Klass*>* local_ifs, TRAPS) {
@@ -4571,8 +4620,8 @@ void ClassFileParser::check_final_method_override(instanceKlassHandle this_klass
             break; // didn't find any match; get out
           }
 
-          if (super_m->is_final() &&
-              // matching method in super is final
+          if (super_m->is_final() && !super_m->is_static() &&
+              // matching method in super is final, and not static
               (Reflection::verify_field_access(this_klass(),
                                                super_m->method_holder(),
                                                super_m->method_holder(),
@@ -4670,10 +4719,6 @@ bool ClassFileParser::is_supported_version(u2 major, u2 minor) {
     (JDK_Version::is_gte_jdk16x_version() ? JAVA_6_VERSION : JAVA_1_5_VERSION);
   return (major >= JAVA_MIN_SUPPORTED_VERSION) &&
          (major <= max_version) &&
-         //比如，如果JAVA_MAX_SUPPORTED_VERSION是52，而JAVA_MAX_SUPPORTED_MINOR_VERSION是0
-         //如果major是52并且minor是1，
-         //此时major==max_version且minor>JAVA_MAX_SUPPORTED_MINOR_VERSION
-         //因此不满足下面这个条件
          ((major != max_version) ||
           (minor <= JAVA_MAX_SUPPORTED_MINOR_VERSION));
 }

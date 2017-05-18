@@ -338,6 +338,7 @@ class GraphKit : public Phase {
   // Convert between int and long, and size_t.
   // (See macros ConvI2X, etc., in type.hpp for ConvI2X, etc.)
   Node* ConvI2L(Node* offset);
+  Node* ConvI2UL(Node* offset);
   Node* ConvL2I(Node* offset);
   // Find out the klass of an object.
   Node* load_object_klass(Node* object);
@@ -406,7 +407,7 @@ class GraphKit : public Phase {
   // Use the type profile to narrow an object type.
   Node* maybe_cast_profiled_receiver(Node* not_null_obj,
                                      ciKlass* require_klass,
-                                    ciKlass* spec,
+                                     ciKlass* spec,
                                      bool safe_for_replace);
 
   // Cast obj to type and emit guard unless we had too many traps here already
@@ -510,36 +511,50 @@ class GraphKit : public Phase {
 
   // Create a LoadNode, reading from the parser's memory state.
   // (Note:  require_atomic_access is useful only with T_LONG.)
+  //
+  // We choose the unordered semantics by default because we have
+  // adapted the `do_put_xxx' and `do_get_xxx' procedures for the case
+  // of volatile fields.
   Node* make_load(Node* ctl, Node* adr, const Type* t, BasicType bt,
-                  bool require_atomic_access = false) {
+                  MemNode::MemOrd mo, bool require_atomic_access = false) {
     // This version computes alias_index from bottom_type
     return make_load(ctl, adr, t, bt, adr->bottom_type()->is_ptr(),
-                     require_atomic_access);
+                     mo, require_atomic_access);
   }
-  Node* make_load(Node* ctl, Node* adr, const Type* t, BasicType bt, const TypePtr* adr_type, bool require_atomic_access = false) {
+  Node* make_load(Node* ctl, Node* adr, const Type* t, BasicType bt, const TypePtr* adr_type,
+                  MemNode::MemOrd mo, bool require_atomic_access = false) {
     // This version computes alias_index from an address type
     assert(adr_type != NULL, "use other make_load factory");
     return make_load(ctl, adr, t, bt, C->get_alias_index(adr_type),
-                     require_atomic_access);
+                     mo, require_atomic_access);
   }
   // This is the base version which is given an alias index.
-  Node* make_load(Node* ctl, Node* adr, const Type* t, BasicType bt, int adr_idx, bool require_atomic_access = false);
+  Node* make_load(Node* ctl, Node* adr, const Type* t, BasicType bt, int adr_idx,
+                  MemNode::MemOrd mo, bool require_atomic_access = false);
 
   // Create & transform a StoreNode and store the effect into the
   // parser's memory state.
+  //
+  // We must ensure that stores of object references will be visible
+  // only after the object's initialization. So the clients of this
+  // procedure must indicate that the store requires `release'
+  // semantics, if the stored value is an object reference that might
+  // point to a new object and may become externally visible.
   Node* store_to_memory(Node* ctl, Node* adr, Node* val, BasicType bt,
                         const TypePtr* adr_type,
+                        MemNode::MemOrd mo,
                         bool require_atomic_access = false) {
     // This version computes alias_index from an address type
     assert(adr_type != NULL, "use other store_to_memory factory");
     return store_to_memory(ctl, adr, val, bt,
                            C->get_alias_index(adr_type),
-                           require_atomic_access);
+                           mo, require_atomic_access);
   }
   // This is the base version which is given alias index
   // Return the new StoreXNode
   Node* store_to_memory(Node* ctl, Node* adr, Node* val, BasicType bt,
                         int adr_idx,
+                        MemNode::MemOrd,
                         bool require_atomic_access = false);
 
 
@@ -557,40 +572,44 @@ class GraphKit : public Phase {
 
   Node* store_oop(Node* ctl,
                   Node* obj,   // containing obj
-                  Node* adr,  // actual adress to store val at
+                  Node* adr,   // actual adress to store val at
                   const TypePtr* adr_type,
                   Node* val,
                   const TypeOopPtr* val_type,
                   BasicType bt,
-                  bool use_precise);
+                  bool use_precise,
+                  MemNode::MemOrd mo);
 
   Node* store_oop_to_object(Node* ctl,
                             Node* obj,   // containing obj
-                            Node* adr,  // actual adress to store val at
+                            Node* adr,   // actual adress to store val at
                             const TypePtr* adr_type,
                             Node* val,
                             const TypeOopPtr* val_type,
-                            BasicType bt) {
-    return store_oop(ctl, obj, adr, adr_type, val, val_type, bt, false);
+                            BasicType bt,
+                            MemNode::MemOrd mo) {
+    return store_oop(ctl, obj, adr, adr_type, val, val_type, bt, false, mo);
   }
 
   Node* store_oop_to_array(Node* ctl,
                            Node* obj,   // containing obj
-                           Node* adr,  // actual adress to store val at
+                           Node* adr,   // actual adress to store val at
                            const TypePtr* adr_type,
                            Node* val,
                            const TypeOopPtr* val_type,
-                           BasicType bt) {
-    return store_oop(ctl, obj, adr, adr_type, val, val_type, bt, true);
+                           BasicType bt,
+                           MemNode::MemOrd mo) {
+    return store_oop(ctl, obj, adr, adr_type, val, val_type, bt, true, mo);
   }
 
   // Could be an array or object we don't know at compile time (unsafe ref.)
   Node* store_oop_to_unknown(Node* ctl,
                              Node* obj,   // containing obj
-                             Node* adr,  // actual adress to store val at
+                             Node* adr,   // actual adress to store val at
                              const TypePtr* adr_type,
                              Node* val,
-                             BasicType bt);
+                             BasicType bt,
+                             MemNode::MemOrd mo);
 
   // For the few case where the barriers need special help
   void pre_barrier(bool do_load, Node* ctl,
@@ -666,7 +685,7 @@ class GraphKit : public Phase {
   // Replace the call with the current state of the kit.  Requires
   // that the call was generated with separate io_projs so that
   // exceptional control flow can be handled properly.
-  void replace_call(CallNode* call, Node* result);
+  void replace_call(CallNode* call, Node* result, bool do_replaced_nodes = false);
 
   // helper functions for statistics
   void increment_counter(address counter_addr);   // increment a debug counter
@@ -783,7 +802,7 @@ class GraphKit : public Phase {
 
   // merge in all memory slices from new_mem, along the given path
   void merge_memory(Node* new_mem, Node* region, int new_path);
-  void make_slow_call_ex(Node* call, ciInstanceKlass* ex_klass, bool separate_io_proj);
+  void make_slow_call_ex(Node* call, ciInstanceKlass* ex_klass, bool separate_io_proj, bool deoptimize = false);
 
   // Helper functions to build synchronizations
   int next_monitor();
@@ -825,13 +844,16 @@ class GraphKit : public Phase {
 
   // implementation of object creation
   Node* set_output_for_allocation(AllocateNode* alloc,
-                                  const TypeOopPtr* oop_type);
+                                  const TypeOopPtr* oop_type,
+                                  bool deoptimize_on_exception=false);
   Node* get_layout_helper(Node* klass_node, jint& constant_value);
   Node* new_instance(Node* klass_node,
                      Node* slow_test = NULL,
-                     Node* *return_size_val = NULL);
+                     Node* *return_size_val = NULL,
+                     bool deoptimize_on_exception = false);
   Node* new_array(Node* klass_node, Node* count_val, int nargs,
-                  Node* *return_size_val = NULL);
+                  Node* *return_size_val = NULL,
+                  bool deoptimize_on_exception = false);
 
   // java.lang.String helpers
   Node* load_String_offset(Node* ctrl, Node* str);

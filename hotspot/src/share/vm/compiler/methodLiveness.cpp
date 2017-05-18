@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2011, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -31,6 +31,8 @@
 #include "interpreter/bytecodes.hpp"
 #include "memory/allocation.inline.hpp"
 #include "utilities/bitMap.inline.hpp"
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 // The MethodLiveness class performs a simple liveness analysis on a method
 // in order to decide which locals are live (that is, will be used again) at
@@ -473,7 +475,7 @@ MethodLivenessResult MethodLiveness::get_liveness_at(int entry_bci) {
     bci = 0;
   }
 
-  MethodLivenessResult answer((uintptr_t*)NULL,0);
+  MethodLivenessResult answer((BitMap::bm_word_t*)NULL,0);
 
   if (_block_count > 0) {
     if (TimeLivenessAnalysis) _time_total.start();
@@ -998,7 +1000,7 @@ bool MethodLiveness::BasicBlock::merge_exception(BitMap other) {
 }
 
 MethodLivenessResult MethodLiveness::BasicBlock::get_liveness_at(ciMethod* method, int bci) {
-  MethodLivenessResult answer(NEW_RESOURCE_ARRAY(uintptr_t, _analyzer->bit_map_size_words()),
+  MethodLivenessResult answer(NEW_RESOURCE_ARRAY(BitMap::bm_word_t, _analyzer->bit_map_size_words()),
                 _analyzer->bit_map_size_bits());
   answer.set_is_valid();
 

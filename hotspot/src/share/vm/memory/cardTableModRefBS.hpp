@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -96,12 +96,12 @@ class CardTableModRefBS: public ModRefBarrierSet {
   // The declaration order of these const fields is important; see the
   // constructor before changing.
   const MemRegion _whole_heap;       // the region covered by the card table
-  const size_t    _guard_index;      // index of very last element in the card
+  size_t          _guard_index;      // index of very last element in the card
                                      // table; it is set to a guard value
                                      // (last_card) and should never be modified
-  const size_t    _last_valid_index; // index of the last valid element
+  size_t          _last_valid_index; // index of the last valid element
   const size_t    _page_size;        // page size used when mapping _byte_map
-  const size_t    _byte_map_size;    // in bytes
+  size_t          _byte_map_size;    // in bytes
   jbyte*          _byte_map;         // the card marking array
 
   int _cur_covered_regions;
@@ -123,7 +123,12 @@ class CardTableModRefBS: public ModRefBarrierSet {
  protected:
   // Initialization utilities; covered_words is the size of the covered region
   // in, um, words.
-  inline size_t cards_required(size_t covered_words);
+  inline size_t cards_required(size_t covered_words) {
+    // Add one for a guard card, used to detect errors.
+    const size_t words = align_size_up(covered_words, card_size_in_words);
+    return words / card_size_in_words + 1;
+  }
+
   inline size_t compute_byte_map_size();
 
   // Finds and return the index of the region, if any, to which the given
@@ -137,7 +142,7 @@ class CardTableModRefBS: public ModRefBarrierSet {
   int find_covering_region_containing(HeapWord* addr);
 
   // Resize one of the regions covered by the remembered set.
-  void resize_covered_region(MemRegion new_region);
+  virtual void resize_covered_region(MemRegion new_region);
 
   // Returns the leftmost end of a committed region corresponding to a
   // covered region before covered region "ind", or else "NULL" if "ind" is
@@ -155,7 +160,7 @@ class CardTableModRefBS: public ModRefBarrierSet {
     assert(_whole_heap.contains(p),
            err_msg("Attempt to access p = "PTR_FORMAT" out of bounds of "
                    " card marking array's _whole_heap = ["PTR_FORMAT","PTR_FORMAT")",
-                   p, _whole_heap.start(), _whole_heap.end()));
+                   p2i(p), p2i(_whole_heap.start()), p2i(_whole_heap.end())));
     jbyte* result = &byte_map_base[uintptr_t(p) >> card_shift];
     assert(result >= _byte_map && result < _byte_map + _byte_map_size,
            "out of bounds accessor for card marking array");
@@ -282,6 +287,8 @@ public:
   CardTableModRefBS(MemRegion whole_heap, int max_covered_regions);
   ~CardTableModRefBS();
 
+  virtual void initialize();
+
   // *** Barrier set functions.
 
   bool has_write_ref_pre_barrier() { return false; }
@@ -292,7 +299,7 @@ public:
   // these functions here for performance.
 protected:
   void write_ref_field_work(oop obj, size_t offset, oop newVal);
-  virtual void write_ref_field_work(void* field, oop newVal);
+  virtual void write_ref_field_work(void* field, oop newVal, bool release = false);
 public:
 
   bool has_write_ref_array_opt() { return true; }
@@ -324,9 +331,14 @@ public:
 
   template <class T> inline void inline_write_ref_field_pre(T* field, oop newVal) {}
 
-  template <class T> inline void inline_write_ref_field(T* field, oop newVal) {
+  template <class T> inline void inline_write_ref_field(T* field, oop newVal, bool release) {
     jbyte* byte = byte_for((void*)field);
-    *byte = dirty_card;
+    if (release) {
+      // Perform a releasing store if requested.
+      OrderAccess::release_store((volatile jbyte*) byte, dirty_card);
+    } else {
+      *byte = dirty_card;
+    }
   }
 
   // These are used by G1, when it uses the card table as a temporary data
@@ -426,7 +438,7 @@ public:
     assert(_whole_heap.contains(result),
            err_msg("Returning result = "PTR_FORMAT" out of bounds of "
                    " card marking array's _whole_heap = ["PTR_FORMAT","PTR_FORMAT")",
-                   result, _whole_heap.start(), _whole_heap.end()));
+                   p2i(result), p2i(_whole_heap.start()), p2i(_whole_heap.end())));
     return result;
   }
 
@@ -435,7 +447,7 @@ public:
     assert(_whole_heap.contains(p),
            err_msg("Attempt to access p = "PTR_FORMAT" out of bounds of "
                    " card marking array's _whole_heap = ["PTR_FORMAT","PTR_FORMAT")",
-                   p, _whole_heap.start(), _whole_heap.end()));
+                   p2i(p), p2i(_whole_heap.start()), p2i(_whole_heap.end())));
     return byte_for(p) - _byte_map;
   }
 

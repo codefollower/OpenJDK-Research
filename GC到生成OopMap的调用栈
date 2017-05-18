@@ -1,0 +1,25 @@
+JVM默认单线程GC到生成OopMap的调用栈
+ GenerateOopMap::compute_map(Thread *) : void
+OopMapForCacheEntry::compute_map(Thread *) : void
+OopMapCacheEntry::fill(methodHandle, int) : void
+OopMapCache::compute_one_oop_map(methodHandle, int, InterpreterOopMap *) : void
+frame::oops_interpreted_do(OopClosure *, CLDClosure *, const RegisterMap *, bool) : void
+frame::oops_do_internal(OopClosure *, CLDClosure *, CodeBlobClosure *, RegisterMap *, bool) : void
+frame::oops_do(OopClosure *, CLDClosure *, CodeBlobClosure *, RegisterMap *) : void
+JavaThread::oops_do(OopClosure *, CLDClosure *, CodeBlobClosure *) : void
+Threads::possibly_parallel_oops_do(OopClosure *, CLDClosure *, CodeBlobClosure *) : void
+SharedHeap::process_roots(bool, enum ScanningOption, OopClosure *, OopClosure *, CLDClosure *, CLDClosure *,                                                 CodeBlobClosure *) : void
+GenCollectedHeap::gen_process_roots(int, bool, bool, enum ScanningOption, OopsInGenClosure *, OopsInGenClosure *, OopsInGenClosure *, CLDClosure *, CLDClosure *, CodeBlobClosure *) : void
+GenCollectedHeap::gen_process_roots(int, bool, bool, enum ScanningOption, bool, OopsInGenClosure *, OopsInGenClosure *,                                                                 CLDClosure *) : void
+DefNewGeneration::collect(bool, bool, size_t, bool) : void
+GenCollectedHeap::do_collection(bool, bool, size_t, bool, int) : void
+GenCollectedHeap::do_full_collection(bool, int) : void (2 matches)
+VM_GenCollectFull::doit() : void
+VM_Operation::evaluate() : void
+VMThread::execute(VM_Operation *) : void (2 matches)
+GenCollectedHeap::collect_locked(enum Cause, int) : void
+GenCollectedHeap::collect_locked(enum Cause) : void
+GenCollectedHeap::collect(enum Cause, int) : void
+GenCollectedHeap::collect(enum Cause) : void 
+JVM_GC() : void
+java : System.gc()

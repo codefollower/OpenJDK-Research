@@ -23,6 +23,7 @@
  */
 
 #include "precompiled.hpp"
+#include "classfile/classLoaderExt.hpp"
 #include "classfile/systemDictionary.hpp"
 #include "classfile/vmSymbols.hpp"
 #include "interpreter/bytecodeStream.hpp"
@@ -307,9 +308,9 @@ JvmtiEnv::GetObjectSize(jobject object, jlong* size_ptr) {
       !java_lang_Class::is_primitive(mirror)) {
     Klass* k = java_lang_Class::as_Klass(mirror);
     assert(k != NULL, "class for non-primitive mirror must exist");
-    *size_ptr = k->size() * wordSize;
+    *size_ptr = (jlong)k->size() * wordSize;
   } else {
-    *size_ptr = mirror->size() * wordSize;
+    *size_ptr = (jlong)mirror->size() * wordSize;
     }
   return JVMTI_ERROR_NONE;
 } /* end GetObjectSize */
@@ -475,7 +476,7 @@ JvmtiEnv::AddToBootstrapClassLoaderSearch(const char* segment) {
     if (TraceClassLoading) {
       tty->print_cr("[Opened %s]", zip_entry->name());
     }
-    ClassLoader::add_to_list(zip_entry);
+    ClassLoaderExt::append_boot_classpath(zip_entry);
     return JVMTI_ERROR_NONE;
   } else {
     return JVMTI_ERROR_WRONG_PHASE;

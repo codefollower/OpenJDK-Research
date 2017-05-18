@@ -590,10 +590,35 @@ private:
     vex_prefix(src, nds_enc, dst_enc, pre, VEX_OPCODE_0F, false, vector256);
   }
 
+  void vex_prefix_0F38(Register dst, Register nds, Address src) {
+    bool vex_w = false;
+    bool vector256 = false;
+    vex_prefix(src, nds->encoding(), dst->encoding(),
+               VEX_SIMD_NONE, VEX_OPCODE_0F_38, vex_w, vector256);
+  }
+
+  void vex_prefix_0F38_q(Register dst, Register nds, Address src) {
+    bool vex_w = true;
+    bool vector256 = false;
+    vex_prefix(src, nds->encoding(), dst->encoding(),
+               VEX_SIMD_NONE, VEX_OPCODE_0F_38, vex_w, vector256);
+  }
   int  vex_prefix_and_encode(int dst_enc, int nds_enc, int src_enc,
                              VexSimdPrefix pre, VexOpcode opc,
                              bool vex_w, bool vector256);
 
+  int  vex_prefix_0F38_and_encode(Register dst, Register nds, Register src) {
+    bool vex_w = false;
+    bool vector256 = false;
+    return vex_prefix_and_encode(dst->encoding(), nds->encoding(), src->encoding(),
+                                 VEX_SIMD_NONE, VEX_OPCODE_0F_38, vex_w, vector256);
+  }
+  int  vex_prefix_0F38_and_encode_q(Register dst, Register nds, Register src) {
+    bool vex_w = true;
+    bool vector256 = false;
+    return vex_prefix_and_encode(dst->encoding(), nds->encoding(), src->encoding(),
+                                 VEX_SIMD_NONE, VEX_OPCODE_0F_38, vex_w, vector256);
+  }
   int  vex_prefix_and_encode(XMMRegister dst, XMMRegister nds, XMMRegister src,
                              VexSimdPrefix pre, bool vector256 = false,
                              VexOpcode opc = VEX_OPCODE_0F) {
@@ -863,6 +888,14 @@ private:
   void addq(Register dst, Address src);
   void addq(Register dst, Register src);
 
+#ifdef _LP64
+ //Add Unsigned Integers with Carry Flag
+  void adcxq(Register dst, Register src);
+
+ //Add Unsigned Integers with Overflow Flag
+  void adoxq(Register dst, Register src);
+#endif
+
   void addr_nop_4();
   void addr_nop_5();
   void addr_nop_7();
@@ -896,6 +929,27 @@ private:
   void andq(Register dst, int32_t imm32);
   void andq(Register dst, Address src);
   void andq(Register dst, Register src);
+
+  // BMI instructions
+  void andnl(Register dst, Register src1, Register src2);
+  void andnl(Register dst, Register src1, Address src2);
+  void andnq(Register dst, Register src1, Register src2);
+  void andnq(Register dst, Register src1, Address src2);
+
+  void blsil(Register dst, Register src);
+  void blsil(Register dst, Address src);
+  void blsiq(Register dst, Register src);
+  void blsiq(Register dst, Address src);
+
+  void blsmskl(Register dst, Register src);
+  void blsmskl(Register dst, Address src);
+  void blsmskq(Register dst, Register src);
+  void blsmskq(Register dst, Address src);
+
+  void blsrl(Register dst, Register src);
+  void blsrl(Register dst, Address src);
+  void blsrq(Register dst, Register src);
+  void blsrq(Register dst, Address src);
 
   void bsfl(Register dst, Register src);
   void bsrl(Register dst, Register src);
@@ -1158,18 +1212,19 @@ private:
   void idivl(Register src);
   void divl(Register src); // Unsigned division
 
+#ifdef _LP64
   void idivq(Register src);
+#endif
 
   void imull(Register dst, Register src);
   void imull(Register dst, Register src, int value);
   void imull(Register dst, Address src);
 
+#ifdef _LP64
   void imulq(Register dst, Register src);
   void imulq(Register dst, Register src, int value);
-#ifdef _LP64
   void imulq(Register dst, Address src);
 #endif
-
 
   // jcc is the generic conditional branch generator to run-
   // time routines, jcc is used for branches to labels. jcc
@@ -1362,8 +1417,15 @@ private:
   void movzwq(Register dst, Register src);
 #endif
 
+  // Unsigned multiply with RAX destination register
   void mull(Address src);
   void mull(Register src);
+
+#ifdef _LP64
+  void mulq(Address src);
+  void mulq(Register src);
+  void mulxq(Register dst1, Register dst2, Register src);
+#endif
 
   // Multiply Scalar Double-Precision Floating-Point Values
   void mulsd(XMMRegister dst, Address src);
@@ -1404,6 +1466,8 @@ private:
 
   // Pemutation of 64bit words
   void vpermq(XMMRegister dst, XMMRegister src, int imm8, bool vector256);
+
+  void pause();
 
   // SSE4.2 string instructions
   void pcmpestri(XMMRegister xmm1, XMMRegister xmm2, int imm8);
@@ -1489,7 +1553,14 @@ private:
 
   void rclq(Register dst, int imm8);
 
+  void rdtsc();
+
   void ret(int imm16);
+
+#ifdef _LP64
+  void rorq(Register dst, int imm8);
+  void rorxq(Register dst, Register src, int imm8);
+#endif
 
   void sahf();
 
@@ -1574,6 +1645,9 @@ private:
   void testq(Register dst, int32_t imm32);
   void testq(Register dst, Register src);
 
+  // BMI - count trailing zeros
+  void tzcntl(Register dst, Register src);
+  void tzcntq(Register dst, Register src);
 
   // Unordered Compare Scalar Double-Precision Floating-Point Values and set EFLAGS
   void ucomisd(XMMRegister dst, Address src);
@@ -1583,15 +1657,21 @@ private:
   void ucomiss(XMMRegister dst, Address src);
   void ucomiss(XMMRegister dst, XMMRegister src);
 
+  void xabort(int8_t imm8);
+
   void xaddl(Address dst, Register src);
 
   void xaddq(Address dst, Register src);
+
+  void xbegin(Label& abort, relocInfo::relocType rtype = relocInfo::none);
 
   void xchgl(Register reg, Address adr);
   void xchgl(Register dst, Register src);
 
   void xchgq(Register reg, Address adr);
   void xchgq(Register dst, Register src);
+
+  void xend();
 
   // Get Value of Extended Control Register
   void xgetbv();
@@ -1778,6 +1858,7 @@ private:
   void vpbroadcastd(XMMRegister dst, XMMRegister src);
 
   // Carry-Less Multiplication Quadword
+  void pclmulqdq(XMMRegister dst, XMMRegister src, int mask);
   void vpclmulqdq(XMMRegister dst, XMMRegister nds, XMMRegister src, int mask);
 
   // AVX instruction which is used to clear upper 128 bits of YMM registers and

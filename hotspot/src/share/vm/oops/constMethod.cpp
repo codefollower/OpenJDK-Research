@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2003, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2003, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -98,9 +98,6 @@ int ConstMethod::size(int code_size,
                       InlineTableSizes* sizes) {
   int extra_bytes = code_size;
   if (sizes->compressed_linenumber_size() > 0) {
-	//ClassFileParser::parse_linenumber_table中读完了所有字节
-	//此类的内存布局也没有说要存line_number_table_length;，
-	//所以这里不像下面那样要额外加sizeof(u2);
     extra_bytes += sizes->compressed_linenumber_size();
   }
   if (sizes->checked_exceptions_length() > 0) {
@@ -160,7 +157,6 @@ u_char* ConstMethod::compressed_linenumber_table() const {
 }
 
 // Last short in ConstMethod* before annotations
-//从最后往前开始计算，下面4个注解类型在内存布局中仅是一个指针
 u2* ConstMethod::last_u2_element() const {
   int offset = 0;
   if (has_method_annotations()) offset++;
@@ -392,8 +388,8 @@ void ConstMethod::copy_annotations_from(ConstMethod* cm) {
 void ConstMethod::print_on(outputStream* st) const {
   ResourceMark rm;
   assert(is_constMethod(), "must be constMethod");
-  st->print_cr(internal_name());
-  st->print(" - method:       " INTPTR_FORMAT " ", (address)method());
+  st->print_cr("%s", internal_name());
+  st->print(" - method:       " INTPTR_FORMAT " ", p2i((address)method()));
   method()->print_value_on(st); st->cr();
   if (has_stackmap_table()) {
     st->print(" - stackmap data:       ");

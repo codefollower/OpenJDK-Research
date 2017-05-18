@@ -68,7 +68,10 @@
 // ciMethod::ciMethod
 //
 // Loaded method.
-ciMethod::ciMethod(methodHandle h_m) : ciMetadata(h_m()) {
+ciMethod::ciMethod(methodHandle h_m, ciInstanceKlass* holder) :
+  ciMetadata(h_m()),
+  _holder(holder)
+{
   assert(h_m() != NULL, "no null method");
 
   // These fields are always filled in in loaded methods.
@@ -80,6 +83,7 @@ ciMethod::ciMethod(methodHandle h_m) : ciMetadata(h_m()) {
   _code_size          = h_m()->code_size();
   _intrinsic_id       = h_m()->intrinsic_id();
   _handler_count      = h_m()->exception_table_length();
+  _size_of_parameters = h_m()->size_of_parameters();
   _uses_monitors      = h_m()->access_flags().has_monitor_bytecodes();
   _balanced_monitors  = !_uses_monitors || h_m()->access_flags().is_monitor_matching();
   _is_c1_compilable   = !h_m()->is_not_c1_compilable();
@@ -123,7 +127,6 @@ ciMethod::ciMethod(methodHandle h_m) : ciMetadata(h_m()) {
   // generating _signature may allow GC and therefore move m.
   // These fields are always filled in.
   _name = env->get_symbol(h_m()->name());
-  _holder = env->get_instance_klass(h_m()->method_holder());
   ciSymbol* sig_symbol = env->get_symbol(h_m()->signature());
   constantPoolHandle cpool = h_m()->constants();
   _signature = new (env->arena()) ciSignature(_holder, cpool, sig_symbol);
@@ -1105,6 +1108,22 @@ bool ciMethod::has_option(const char* option) {
 }
 
 // ------------------------------------------------------------------
+// ciMethod::has_option_value
+//
+template<typename T>
+bool ciMethod::has_option_value(const char* option, T& value) {
+  check_is_loaded();
+  VM_ENTRY_MARK;
+  methodHandle mh(THREAD, get_Method());
+  return CompilerOracle::has_option_value(mh, option, value);
+}
+// Explicit instantiation for all OptionTypes supported.
+template bool ciMethod::has_option_value<intx>(const char* option, intx& value);
+template bool ciMethod::has_option_value<uintx>(const char* option, uintx& value);
+template bool ciMethod::has_option_value<bool>(const char* option, bool& value);
+template bool ciMethod::has_option_value<ccstr>(const char* option, ccstr& value);
+
+// ------------------------------------------------------------------
 // ciMethod::can_be_compiled
 //
 // Have previous compilations of this method succeeded?
@@ -1362,15 +1381,21 @@ ciMethodBlocks  *ciMethod::get_method_blocks() {
 
 #undef FETCH_FLAG_FROM_VM
 
+void ciMethod::dump_name_as_ascii(outputStream* st) {
+  Method* method = get_Method();
+  st->print("%s %s %s",
+            method->klass_name()->as_quoted_ascii(),
+            method->name()->as_quoted_ascii(),
+            method->signature()->as_quoted_ascii());
+}
+
 void ciMethod::dump_replay_data(outputStream* st) {
   ResourceMark rm;
   Method* method = get_Method();
   MethodCounters* mcs = method->method_counters();
-  Klass*  holder = method->method_holder();
-  st->print_cr("ciMethod %s %s %s %d %d %d %d %d",
-               holder->name()->as_quoted_ascii(),
-               method->name()->as_quoted_ascii(),
-               method->signature()->as_quoted_ascii(),
+  st->print("ciMethod ");
+  dump_name_as_ascii(st);
+  st->print_cr(" %d %d %d %d %d",
                mcs == NULL ? 0 : mcs->invocation_counter()->raw_counter(),
                mcs == NULL ? 0 : mcs->backedge_counter()->raw_counter(),
                interpreter_invocation_count(),

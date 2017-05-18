@@ -132,7 +132,8 @@ class LIR_Assembler: public CompilationResourceObj {
   int code_offset() const;
   address pc() const;
 
-  int  initial_frame_size_in_bytes();
+  int  initial_frame_size_in_bytes() const;
+  int  bang_size_in_bytes() const;
 
   // test for constants which can be encoded directly in instructions
   static bool is_small_constant(LIR_Opr opr);
@@ -143,7 +144,7 @@ class LIR_Assembler: public CompilationResourceObj {
   // stubs
   void emit_slow_case_stubs();
   void emit_static_call_stub();
-  void emit_code_stub(CodeStub* op);
+  void append_code_stub(CodeStub* op);
   void add_call_info_here(CodeEmitInfo* info)                              { add_call_info(code_offset(), info); }
 
   // code patterns

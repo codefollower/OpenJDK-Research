@@ -1,0 +1,33 @@
+暂时记录，tomcat8一次call的调用栈
+
+selector线程：
+    //此处提交给worker处理request
+    Daemon Thread [http-nio-8080-ClientPoller-0] (Suspended (breakpoint at line 621 in NioEndpoint)) 
+    NioEndpoint.processSocket(NioEndpoint$KeyAttachment, SocketStatus, boolean) line: 621
+    NioEndpoint$Poller.processKey(SelectionKey, NioEndpoint$KeyAttachment) line: 1113
+    NioEndpoint$Poller.run() line: 1071
+    Thread.run() line: not available
+
+worker线程：Daemon Thread [http-nio-8080-exec-1] (Running)
+ 
+    HelloWorld.doGet(HttpServletRequest, HttpServletResponse) line: 15
+    HelloWorld(HttpServlet).service(HttpServletRequest, HttpServletResponse) line: 622
+    HelloWorld(HttpServlet).service(ServletRequest, ServletResponse) line: 729
+    ApplicationFilterChain.internalDoFilter(ServletRequest, ServletResponse) line: 291
+    ApplicationFilterChain.doFilter(ServletRequest, ServletResponse) line: 206
+    StandardWrapperValve.invoke(Request, Response) line: 212
+    StandardContextValve.invoke(Request, Response) line: 106
+    NonLoginAuthenticator(AuthenticatorBase).invoke(Request, Response) line: 502
+    StandardHostValve.invoke(Request, Response) line: 141
+    ErrorReportValve.invoke(Request, Response) line: 79
+    AccessLogValve(AbstractAccessLogValve).invoke(Request, Response) line: 616
+    StandardEngineValve.invoke(Request, Response) line: 88
+    CoyoteAdapter.service(Request, Response) line: 521
+    Http11NioProcessor(AbstractHttp11Processor<S>).process(SocketWrapper<S>) line: 1096
+    Http11NioProtocol$Http11ConnectionHandler(AbstractProtocol).process(SocketWrapper, SocketStatus) line: 674
+    NioEndpoint$SocketProcessor.doRun() line: 1500
+    NioEndpoint$SocketProcessor.run() line: 1456
+    ThreadPoolExecutor(ThreadPoolExecutor).runWorker(ThreadPoolExecutor$Worker) line: not available
+    ThreadPoolExecutor$Worker.run() line: not available
+    TaskThread$WrappingRunnable.run() line: 61
+    TaskThread(Thread).run() line: not available [local variables unavailable]

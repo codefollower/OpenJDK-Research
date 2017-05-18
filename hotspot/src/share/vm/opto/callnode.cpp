@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -111,7 +111,7 @@ const char * const ParmNode::names[TypeFunc::Parms+1] = {
 #ifndef PRODUCT
 void ParmNode::dump_spec(outputStream *st) const {
   if( _con < TypeFunc::Parms ) {
-    st->print(names[_con]);
+    st->print("%s", names[_con]);
   } else {
     st->print("Parm%d: ",_con-TypeFunc::Parms);
     // Verbose and WizardMode dump bottom_type for all nodes
@@ -342,24 +342,24 @@ static void format_helper( PhaseRegAlloc *regalloc, outputStream* st, Node *n, c
       st->print(" %s%d]=#"INT32_FORMAT,msg,i,t->is_int()->get_con());
       break;
     case Type::AnyPtr:
-      assert( t == TypePtr::NULL_PTR, "" );
+      assert( t == TypePtr::NULL_PTR || n->in_dump(), "" );
       st->print(" %s%d]=#NULL",msg,i);
       break;
     case Type::AryPtr:
     case Type::InstPtr:
-      st->print(" %s%d]=#Ptr" INTPTR_FORMAT,msg,i,t->isa_oopptr()->const_oop());
+      st->print(" %s%d]=#Ptr" INTPTR_FORMAT,msg,i,p2i(t->isa_oopptr()->const_oop()));
       break;
     case Type::KlassPtr:
-      st->print(" %s%d]=#Ptr" INTPTR_FORMAT,msg,i,t->make_ptr()->isa_klassptr()->klass());
+      st->print(" %s%d]=#Ptr" INTPTR_FORMAT,msg,i,p2i(t->make_ptr()->isa_klassptr()->klass()));
       break;
     case Type::MetadataPtr:
-      st->print(" %s%d]=#Ptr" INTPTR_FORMAT,msg,i,t->make_ptr()->isa_metadataptr()->metadata());
+      st->print(" %s%d]=#Ptr" INTPTR_FORMAT,msg,i,p2i(t->make_ptr()->isa_metadataptr()->metadata()));
       break;
     case Type::NarrowOop:
-      st->print(" %s%d]=#Ptr" INTPTR_FORMAT,msg,i,t->make_ptr()->isa_oopptr()->const_oop());
+      st->print(" %s%d]=#Ptr" INTPTR_FORMAT,msg,i,p2i(t->make_ptr()->isa_oopptr()->const_oop()));
       break;
     case Type::RawPtr:
-      st->print(" %s%d]=#Raw" INTPTR_FORMAT,msg,i,t->is_rawptr());
+      st->print(" %s%d]=#Raw" INTPTR_FORMAT,msg,i,p2i(t->is_rawptr()));
       break;
     case Type::DoubleCon:
       st->print(" %s%d]=#%fD",msg,i,t->is_double_constant()->_d);
@@ -368,7 +368,7 @@ static void format_helper( PhaseRegAlloc *regalloc, outputStream* st, Node *n, c
       st->print(" %s%d]=#%fF",msg,i,t->is_float_constant()->_f);
       break;
     case Type::Long:
-      st->print(" %s%d]=#"INT64_FORMAT,msg,i,t->is_long()->get_con());
+      st->print(" %s%d]=#"INT64_FORMAT,msg,i,(int64_t)(t->is_long()->get_con()));
       break;
     case Type::Half:
     case Type::Top:
@@ -427,7 +427,7 @@ void JVMState::format(PhaseRegAlloc *regalloc, const Node *n, outputStream* st) 
 
     for (i = 0; i < (uint)scobjs.length(); i++) {
       // Scalar replaced objects.
-      st->print_cr("");
+      st->cr();
       st->print("        # ScObj" INT32_FORMAT " ", i);
       SafePointScalarObjectNode* spobj = scobjs.at(i);
       ciKlass* cik = spobj->bottom_type()->is_oopptr()->klass();
@@ -484,7 +484,7 @@ void JVMState::format(PhaseRegAlloc *regalloc, const Node *n, outputStream* st) 
       st->print(" }");
     }
   }
-  st->print_cr("");
+  st->cr();
   if (caller() != NULL) caller()->format(regalloc, n, st);
 }
 
@@ -593,6 +593,51 @@ void JVMState::set_map_deep(SafePointNode* map) {
   for (JVMState* p = this; p->_caller != NULL; p = p->_caller) {
     p->set_map(map);
   }
+}
+
+// Adapt offsets in in-array after adding or removing an edge.
+// Prerequisite is that the JVMState is used by only one node.
+void JVMState::adapt_position(int delta) {
+  for (JVMState* jvms = this; jvms != NULL; jvms = jvms->caller()) {
+    jvms->set_locoff(jvms->locoff() + delta);
+    jvms->set_stkoff(jvms->stkoff() + delta);
+    jvms->set_monoff(jvms->monoff() + delta);
+    jvms->set_scloff(jvms->scloff() + delta);
+    jvms->set_endoff(jvms->endoff() + delta);
+  }
+}
+
+// Mirror the stack size calculation in the deopt code
+// How much stack space would we need at this point in the program in
+// case of deoptimization?
+int JVMState::interpreter_frame_size() const {
+  const JVMState* jvms = this;
+  int size = 0;
+  int callee_parameters = 0;
+  int callee_locals = 0;
+  int extra_args = method()->max_stack() - stk_size();
+
+  while (jvms != NULL) {
+    int locks = jvms->nof_monitors();
+    int temps = jvms->stk_size();
+    bool is_top_frame = (jvms == this);
+    ciMethod* method = jvms->method();
+
+    int frame_size = BytesPerWord * Interpreter::size_activation(method->max_stack(),
+                                                                 temps + callee_parameters,
+                                                                 extra_args,
+                                                                 locks,
+                                                                 callee_parameters,
+                                                                 callee_locals,
+                                                                 is_top_frame);
+    size += frame_size;
+
+    callee_parameters = method->size_of_parameters();
+    callee_locals = method->max_locals();
+    extra_args = 0;
+    jvms = jvms->caller();
+  }
+  return size + Deoptimization::last_frame_adjust(0, callee_locals) * BytesPerWord;
 }
 
 //=============================================================================
@@ -732,7 +777,7 @@ bool CallNode::has_non_debug_use(Node *n) {
 }
 
 // Returns the unique CheckCastPP of a call
-// or 'this' if there are several CheckCastPP
+// or 'this' if there are several CheckCastPP or unexpected uses
 // or returns NULL if there is no one.
 Node *CallNode::result_cast() {
   Node *cast = NULL;
@@ -748,6 +793,13 @@ Node *CallNode::result_cast() {
         return this;  // more than 1 CheckCastPP
       }
       cast = use;
+    } else if (!use->is_Initialize() &&
+               !use->is_AddP()) {
+      // Expected uses are restricted to a CheckCastPP, an Initialize
+      // node, and AddP nodes. If we encounter any other use (a Phi
+      // node can be seen in rare cases) return this to prevent
+      // incorrect optimizations.
+      return this;
     }
   }
   return cast;
@@ -887,7 +939,7 @@ int CallStaticJavaNode::extract_uncommon_trap_request(const Node* call) {
   if (!(call->req() > TypeFunc::Parms &&
         call->in(TypeFunc::Parms) != NULL &&
         call->in(TypeFunc::Parms)->is_Con())) {
-    assert(_in_dump_cnt != 0, "OK if dumping");
+    assert(in_dump() != 0, "OK if dumping");
     tty->print("[bad uncommon trap]");
     return 0;
   }
@@ -935,7 +987,7 @@ uint CallRuntimeNode::cmp( const Node &n ) const {
 #ifndef PRODUCT
 void CallRuntimeNode::dump_spec(outputStream *st) const {
   st->print("# ");
-  st->print(_name);
+  st->print("%s", _name);
   CallNode::dump_spec(st);
 }
 #endif
@@ -953,7 +1005,7 @@ void CallRuntimeNode::calling_convention( BasicType* sig_bt, VMRegPair *parm_reg
 #ifndef PRODUCT
 void CallLeafNode::dump_spec(outputStream *st) const {
   st->print("# ");
-  st->print(_name);
+  st->print("%s", _name);
   CallNode::dump_spec(st);
 }
 #endif
@@ -1044,6 +1096,7 @@ const Type *SafePointNode::Value( PhaseTransform *phase ) const {
 #ifndef PRODUCT
 void SafePointNode::dump_spec(outputStream *st) const {
   st->print(" SafePoint ");
+  _replaced_nodes.dump(st);
 }
 #endif
 

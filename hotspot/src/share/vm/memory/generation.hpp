@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -299,6 +299,10 @@ class Generation: public CHeapObj<mtGC> {
     guarantee(false, "Generation doesn't support thread local allocation buffers");
     return 0;
   }
+  virtual size_t tlab_used() const {
+    guarantee(false, "Generation doesn't support thread local allocation buffers");
+    return 0;
+  }
   virtual size_t unsafe_max_tlab_alloc() const {
     guarantee(false, "Generation doesn't support thread local allocation buffers");
     return 0;
@@ -418,7 +422,7 @@ class Generation: public CHeapObj<mtGC> {
     // have to guard against non-monotonicity.
     NOT_PRODUCT(
       if (now < _time_of_last_gc) {
-        warning("time warp: "INT64_FORMAT" to "INT64_FORMAT, _time_of_last_gc, now);
+        warning("time warp: "INT64_FORMAT" to "INT64_FORMAT, (int64_t)_time_of_last_gc, (int64_t)now);
       }
     )
     return _time_of_last_gc;
@@ -538,10 +542,6 @@ class Generation: public CHeapObj<mtGC> {
   // Iterate over all the ref-containing fields of all objects in the
   // generation, calling "cl.do_oop" on each.
   virtual void oop_iterate(ExtendedOopClosure* cl);
-
-  // Same as above, restricted to the intersection of a memory region and
-  // the generation.
-  virtual void oop_iterate(MemRegion mr, ExtendedOopClosure* cl);
 
   // Iterate over all objects in the generation, calling "cl.do_object" on
   // each.

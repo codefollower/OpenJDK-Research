@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2000, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2000, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -28,6 +28,7 @@
 #include "memory/allocation.hpp"
 #include "memory/allocation.inline.hpp"
 #include "memory/metaspace.hpp"
+#include "runtime/orderAccess.hpp"
 
 // correct linkage required to compile w/o warnings
 // (must be on file level - cannot be local)
@@ -58,7 +59,7 @@ class ResourceArray: public ResourceObj {
 
   void initialize(size_t esize, int length) {
     assert(length >= 0, "illegal length");
-    assert(_data == NULL, "must be new object");
+    assert(StressRewriter || _data == NULL, "must be new object");
     _length  = length;
     _data    = resource_allocate_bytes(esize * length);
     DEBUG_ONLY(init_nesting();)
@@ -304,6 +305,7 @@ class Array: public MetaspaceObj {
   friend class MetadataFactory;
   friend class VMStructs;
   friend class MethodHandleCompiler;           // special case
+  friend class WhiteBox;
 protected:
   int _length;                                 // the number of array elements
   T   _data[1];                                // the array memory
@@ -324,6 +326,31 @@ protected:
   }
 
   static size_t byte_sizeof(int length) { return sizeof(Array<T>) + MAX2(length - 1, 0) * sizeof(T); }
+
+  // WhiteBox API helper.
+  // Can't distinguish between array of length 0 and length 1,
+  // will always return 0 in those cases.
+  static int bytes_to_length(size_t bytes)       {
+    assert(is_size_aligned(bytes, BytesPerWord), "Must be, for now");
+
+    if (sizeof(Array<T>) >= bytes) {
+      return 0;
+    }
+
+    size_t left = bytes - sizeof(Array<T>);
+    assert(is_size_aligned(left, sizeof(T)), "Must be");
+
+    size_t elements = left / sizeof(T);
+    assert(elements <= (size_t)INT_MAX, err_msg("number of elements " SIZE_FORMAT "doesn't fit into an int.", elements));
+
+    int length = (int)elements;
+
+    assert((size_t)size(length) * BytesPerWord == bytes,
+        err_msg("Expected: " SIZE_FORMAT " got: " SIZE_FORMAT,
+                bytes, (size_t)size(length) * BytesPerWord));
+
+    return length;
+  }
 
   explicit Array(int length) : _length(length) {
     assert(length >= 0, "illegal length");
@@ -375,7 +402,7 @@ protected:
 
   // FIXME: How to handle this?
   void print_value_on(outputStream* st) const {
-    st->print("Array<T>(" INTPTR_FORMAT ")", this);
+    st->print("Array<T>(" INTPTR_FORMAT ")", p2i(this));
   }
 
 #ifndef PRODUCT

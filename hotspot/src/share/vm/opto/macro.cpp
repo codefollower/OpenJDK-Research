@@ -699,6 +699,7 @@ bool PhaseMacroExpand::scalar_replacement(AllocateNode *alloc, GrowableArray <Sa
   ciType* elem_type;
 
   Node* res = alloc->result_cast();
+  assert(res == NULL || res->is_CheckCastPP(), "unexpected AllocateNode result");
   const TypeOopPtr* res_type = NULL;
   if (res != NULL) { // Could be NULL when there are no users
     res_type = _igvn.type(res)->isa_oopptr();
@@ -963,7 +964,11 @@ void PhaseMacroExpand::process_users_of_allocation(CallNode *alloc) {
 }
 
 bool PhaseMacroExpand::eliminate_allocate_node(AllocateNode *alloc) {
-  if (!EliminateAllocations || !alloc->_is_non_escaping) {
+  // Don't do scalar replacement if the frame can be popped by JVMTI:
+  // if reallocation fails during deoptimization we'll pop all
+  // interpreter frames for this compiled frame and that won't play
+  // nice with JVMTI popframe.
+  if (!EliminateAllocations || JvmtiExport::can_pop_frame() || !alloc->_is_non_escaping) {
     return false;
   }
   Node* klass = alloc->in(AllocateNode::KlassNode);
@@ -1031,6 +1036,8 @@ bool PhaseMacroExpand::eliminate_boxing_node(CallStaticJavaNode *boxing) {
     return false;
   }
 
+  assert(boxing->result_cast() == NULL, "unexpected boxing node result");
+
   extract_call_projections(boxing);
 
   const TypeTuple* r = boxing->tf()->range();
@@ -1084,7 +1091,7 @@ void PhaseMacroExpand::set_eden_pointers(Node* &eden_top_adr, Node* &eden_end_ad
 Node* PhaseMacroExpand::make_load(Node* ctl, Node* mem, Node* base, int offset, const Type* value_type, BasicType bt) {
   Node* adr = basic_plus_adr(base, offset);
   const TypePtr* adr_type = adr->bottom_type()->is_ptr();
-  Node* value = LoadNode::make(_igvn, ctl, mem, adr, adr_type, value_type, bt);
+  Node* value = LoadNode::make(_igvn, ctl, mem, adr, adr_type, value_type, bt, MemNode::unordered);
   transform_later(value);
   return value;
 }
@@ -1092,7 +1099,7 @@ Node* PhaseMacroExpand::make_load(Node* ctl, Node* mem, Node* base, int offset, 
 
 Node* PhaseMacroExpand::make_store(Node* ctl, Node* mem, Node* base, int offset, Node* value, BasicType bt) {
   Node* adr = basic_plus_adr(base, offset);
-  mem = StoreNode::make(_igvn, ctl, mem, adr, NULL, value, bt);
+  mem = StoreNode::make(_igvn, ctl, mem, adr, NULL, value, bt, MemNode::unordered);
   transform_later(mem);
   return mem;
 }
@@ -1272,8 +1279,8 @@ void PhaseMacroExpand::expand_allocate_common(
     // Load(-locked) the heap top.
     // See note above concerning the control input when using a TLAB
     Node *old_eden_top = UseTLAB
-      ? new (C) LoadPNode      (ctrl, contended_phi_rawmem, eden_top_adr, TypeRawPtr::BOTTOM, TypeRawPtr::BOTTOM)
-      : new (C) LoadPLockedNode(contended_region, contended_phi_rawmem, eden_top_adr);
+      ? new (C) LoadPNode      (ctrl, contended_phi_rawmem, eden_top_adr, TypeRawPtr::BOTTOM, TypeRawPtr::BOTTOM, MemNode::unordered)
+      : new (C) LoadPLockedNode(contended_region, contended_phi_rawmem, eden_top_adr, MemNode::acquire);
 
     transform_later(old_eden_top);
     // Add to heap top to get a new heap top
@@ -1320,7 +1327,7 @@ void PhaseMacroExpand::expand_allocate_common(
     if (UseTLAB) {
       Node* store_eden_top =
         new (C) StorePNode(needgc_false, contended_phi_rawmem, eden_top_adr,
-                              TypeRawPtr::BOTTOM, new_eden_top);
+                              TypeRawPtr::BOTTOM, new_eden_top, MemNode::unordered);
       transform_later(store_eden_top);
       fast_oop_ctrl = needgc_false; // No contention, so this is the fast path
       fast_oop_rawmem = store_eden_top;
@@ -1700,9 +1707,10 @@ Node* PhaseMacroExpand::prefetch_allocation(Node* i_o, Node*& needgc_false,
                    _igvn.MakeConX(in_bytes(JavaThread::tlab_pf_top_offset())) );
       transform_later(eden_pf_adr);
 
-      Node *old_pf_wm = new (C) LoadPNode( needgc_false,
+      Node *old_pf_wm = new (C) LoadPNode(needgc_false,
                                    contended_phi_rawmem, eden_pf_adr,
-                                   TypeRawPtr::BOTTOM, TypeRawPtr::BOTTOM );
+                                   TypeRawPtr::BOTTOM, TypeRawPtr::BOTTOM,
+                                   MemNode::unordered);
       transform_later(old_pf_wm);
 
       // check against new_eden_top
@@ -1726,9 +1734,10 @@ Node* PhaseMacroExpand::prefetch_allocation(Node* i_o, Node*& needgc_false,
       transform_later(new_pf_wmt );
       new_pf_wmt->set_req(0, need_pf_true);
 
-      Node *store_new_wmt = new (C) StorePNode( need_pf_true,
+      Node *store_new_wmt = new (C) StorePNode(need_pf_true,
                                        contended_phi_rawmem, eden_pf_adr,
-                                       TypeRawPtr::BOTTOM, new_pf_wmt );
+                                       TypeRawPtr::BOTTOM, new_pf_wmt,
+                                       MemNode::unordered);
       transform_later(store_new_wmt);
 
       // adding prefetches
@@ -2189,7 +2198,7 @@ void PhaseMacroExpand::expand_lock_node(LockNode *lock) {
     Node* klass_node = AllocateNode::Ideal_klass(obj, &_igvn);
     if (klass_node == NULL) {
       Node* k_adr = basic_plus_adr(obj, oopDesc::klass_offset_in_bytes());
-      klass_node = transform_later( LoadKlassNode::make(_igvn, mem, k_adr, _igvn.type(k_adr)->is_ptr()) );
+      klass_node = transform_later(LoadKlassNode::make(_igvn, NULL, mem, k_adr, _igvn.type(k_adr)->is_ptr()));
 #ifdef _LP64
       if (UseCompressedClassPointers && klass_node->is_DecodeNKlass()) {
         assert(klass_node->in(1)->Opcode() == Op_LoadNKlass, "sanity");
@@ -2437,6 +2446,7 @@ void PhaseMacroExpand::eliminate_macro_nodes() {
     }
   }
   // Next, attempt to eliminate allocations
+  _has_locks = false;
   progress = true;
   while (progress) {
     progress = false;
@@ -2455,11 +2465,13 @@ void PhaseMacroExpand::eliminate_macro_nodes() {
       case Node::Class_Lock:
       case Node::Class_Unlock:
         assert(!n->as_AbstractLock()->is_eliminated(), "sanity");
+        _has_locks = true;
         break;
       default:
         assert(n->Opcode() == Op_LoopLimit ||
                n->Opcode() == Op_Opaque1   ||
-               n->Opcode() == Op_Opaque2, "unknown node type in macro list");
+               n->Opcode() == Op_Opaque2   ||
+               n->Opcode() == Op_Opaque3, "unknown node type in macro list");
       }
       assert(success == (C->macro_count() < old_macro_count), "elimination reduces macro count");
       progress = progress || success;
@@ -2500,6 +2512,30 @@ bool PhaseMacroExpand::expand_macro_nodes() {
       } else if (n->Opcode() == Op_Opaque1 || n->Opcode() == Op_Opaque2) {
         _igvn.replace_node(n, n->in(1));
         success = true;
+#if INCLUDE_RTM_OPT
+      } else if ((n->Opcode() == Op_Opaque3) && ((Opaque3Node*)n)->rtm_opt()) {
+        assert(C->profile_rtm(), "should be used only in rtm deoptimization code");
+        assert((n->outcnt() == 1) && n->unique_out()->is_Cmp(), "");
+        Node* cmp = n->unique_out();
+#ifdef ASSERT
+        // Validate graph.
+        assert((cmp->outcnt() == 1) && cmp->unique_out()->is_Bool(), "");
+        BoolNode* bol = cmp->unique_out()->as_Bool();
+        assert((bol->outcnt() == 1) && bol->unique_out()->is_If() &&
+               (bol->_test._test == BoolTest::ne), "");
+        IfNode* ifn = bol->unique_out()->as_If();
+        assert((ifn->outcnt() == 2) &&
+               ifn->proj_out(1)->is_uncommon_trap_proj(Deoptimization::Reason_rtm_state_change), "");
+#endif
+        Node* repl = n->in(1);
+        if (!_has_locks) {
+          // Remove RTM state check if there are no locks in the code.
+          // Replace input to compare the same value.
+          repl = (cmp->in(1) == n) ? cmp->in(2) : cmp->in(1);
+        }
+        _igvn.replace_node(n, repl);
+        success = true;
+#endif
       }
       assert(success == (C->macro_count() < old_macro_count), "elimination reduces macro count");
       progress = progress || success;

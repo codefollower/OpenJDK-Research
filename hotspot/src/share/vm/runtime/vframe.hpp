@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -186,7 +186,7 @@ class interpretedVFrame: public javaVFrame {
  private:
   static const int bcp_offset;
   intptr_t* locals_addr_at(int offset) const;
-
+  StackValueCollection* stack_data(bool expressions) const;
   // returns where the parameters starts relative to the frame pointer
   int start_of_parameters() const;
 
@@ -399,7 +399,7 @@ inline void vframeStreamCommon::fill_from_compiled_frame(int decode_offset) {
     if (WizardMode) {
       tty->print_cr("Error in fill_from_frame: pc_desc for "
                     INTPTR_FORMAT " not found or invalid at %d",
-                    _frame.pc(), decode_offset);
+                    p2i(_frame.pc()), decode_offset);
       nm()->print();
       nm()->method()->print_codes();
       nm()->print_code();

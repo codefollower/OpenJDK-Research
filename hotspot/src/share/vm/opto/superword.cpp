@@ -1262,8 +1262,9 @@ void SuperWord::co_locate_pack(Node_List* pk) {
     memops.clear();
     for (DUIterator i = upper_insert_pt->outs(); upper_insert_pt->has_out(i); i++) {
       Node* use = upper_insert_pt->out(i);
-      if (!use->is_Store())
+      if (use->is_Mem() && !use->is_Store()) {
         memops.push(use);
+      }
     }
 
     MemNode* lower_insert_pt = last;
@@ -1373,6 +1374,20 @@ void SuperWord::output() {
       if (n->is_Load()) {
         Node* ctl = n->in(MemNode::Control);
         Node* mem = first->in(MemNode::Memory);
+        SWPointer p1(n->as_Mem(), this);
+        // Identify the memory dependency for the new loadVector node by
+        // walking up through memory chain.
+        // This is done to give flexibility to the new loadVector node so that
+        // it can move above independent storeVector nodes.
+        while (mem->is_StoreVector()) {
+          SWPointer p2(mem->as_Mem(), this);
+          int cmp = p1.cmp(p2);
+          if (SWPointer::not_equal(cmp) || !SWPointer::comparable(cmp)) {
+            mem = mem->in(MemNode::Memory);
+          } else {
+            break; // dependent memory
+          }
+        }
         Node* adr = low_adr->in(MemNode::Address);
         const TypePtr* atyp = n->adr_type();
         vn = LoadVectorNode::make(C, opc, ctl, mem, adr, atyp, vlen, velt_basic_type(n));

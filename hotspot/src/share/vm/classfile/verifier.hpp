@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1998, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1998, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -30,6 +30,7 @@
 #include "oops/klass.hpp"
 #include "oops/method.hpp"
 #include "runtime/handles.hpp"
+#include "utilities/growableArray.hpp"
 #include "utilities/exceptions.hpp"
 
 // The verifier class
@@ -300,13 +301,24 @@ class ClassVerifier : public StackObj {
 
   void verify_invoke_init(
     RawBytecodeStream* bcs, u2 ref_index, VerificationType ref_class_type,
-    StackMapFrame* current_frame, u4 code_length, bool* this_uninit,
-    constantPoolHandle cp, TRAPS);
+    StackMapFrame* current_frame, u4 code_length, bool in_try_block,
+    bool* this_uninit, constantPoolHandle cp, StackMapTable* stackmap_table,
+    TRAPS);
+
+  // Used by ends_in_athrow() to push all handlers that contain bci onto
+  // the handler_stack, if the handler is not already on the stack.
+  void push_handlers(ExceptionTable* exhandlers,
+                     GrowableArray<u4>* handler_stack,
+                     u4 bci);
+
+  // Returns true if all paths starting with start_bc_offset end in athrow
+  // bytecode or loop.
+  bool ends_in_athrow(u4 start_bc_offset);
 
   void verify_invoke_instructions(
     RawBytecodeStream* bcs, u4 code_length, StackMapFrame* current_frame,
-    bool* this_uninit, VerificationType return_type,
-    constantPoolHandle cp, TRAPS);
+    bool in_try_block, bool* this_uninit, VerificationType return_type,
+    constantPoolHandle cp, StackMapTable* stackmap_table, TRAPS);
 
   VerificationType get_newarray_type(u2 index, u2 bci, TRAPS);
   void verify_anewarray(u2 bci, u2 index, constantPoolHandle cp,
@@ -375,15 +387,15 @@ class ClassVerifier : public StackObj {
   bool has_error() const { return result() != NULL; }
   char* exception_message() {
     stringStream ss;
-    ss.print(_message);
+    ss.print("%s", _message);
     _error_context.details(&ss, _method());
     return ss.as_string();
   }
 
   // Called when verify or class format errors are encountered.
   // May throw an exception based upon the mode.
-  void verify_error(ErrorContext ctx, const char* fmt, ...);
-  void class_format_error(const char* fmt, ...);
+  void verify_error(ErrorContext ctx, const char* fmt, ...) ATTRIBUTE_PRINTF(3, 4);
+  void class_format_error(const char* fmt, ...) ATTRIBUTE_PRINTF(2, 3);
 
   Klass* load_class(Symbol* name, TRAPS);
 
@@ -403,6 +415,7 @@ class ClassVerifier : public StackObj {
   Symbol* create_temporary_symbol(const char *s, int length, TRAPS);
 
   TypeOrigin ref_ctx(const char* str, TRAPS);
+
 };
 
 inline int ClassVerifier::change_sig_to_verificationType(

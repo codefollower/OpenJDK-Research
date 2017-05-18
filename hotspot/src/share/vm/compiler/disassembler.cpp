@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2008, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -50,6 +50,8 @@
 #ifdef SHARK
 #include "shark/sharkEntry.hpp"
 #endif
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 void*       Disassembler::_library               = NULL;
 bool        Disassembler::_tried_to_load_library = false;
@@ -243,12 +245,12 @@ class decode_env {
 };
 
 decode_env::decode_env(CodeBlob* code, outputStream* output, CodeStrings c) {
-  memset(this, 0, sizeof(*this));
+  memset(this, 0, sizeof(*this)); // Beware, this zeroes bits of fields.
   _output = output ? output : tty;
   _code = code;
   if (code != NULL && code->is_nmethod())
     _nm = (nmethod*) code;
-  _strings.assign(c);
+  _strings.copy(c);
 
   // by default, output pc but not bytes:
   _print_pc       = true;
@@ -411,6 +413,7 @@ static void* event_to_env(void* env_pv, const char* event, void* arg) {
   return env->handle_event(event, (address) arg);
 }
 
+ATTRIBUTE_PRINTF(2, 3)
 static int printf_to_env(void* env_pv, const char* format, ...) {
   decode_env* env = (decode_env*) env_pv;
   outputStream* st = env->output();

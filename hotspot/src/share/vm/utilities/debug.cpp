@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -88,6 +88,8 @@
 #  endif
 #endif // PRODUCT
 
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
+
 FormatBufferResource::FormatBufferResource(const char * format, ...)
   : FormatBufferBase((char*)resource_allocate_bytes(RES_BUFSZ)) {
   va_list argp;
@@ -96,6 +98,7 @@ FormatBufferResource::FormatBufferResource(const char * format, ...)
   va_end(argp);
 }
 
+ATTRIBUTE_PRINTF(1, 2)
 void warning(const char* format, ...) {
   if (PrintWarnings) {
     FILE* const err = defaultStream::error_stream();
@@ -263,17 +266,19 @@ void report_out_of_shared_space(SharedSpaceType shared_space) {
     "native memory for metadata",
     "shared read only space",
     "shared read write space",
-    "shared miscellaneous data space"
+    "shared miscellaneous data space",
+    "shared miscellaneous code space"
   };
   static const char* flag[] = {
     "Metaspace",
     "SharedReadOnlySize",
     "SharedReadWriteSize",
-    "SharedMiscDataSize"
+    "SharedMiscDataSize",
+    "SharedMiscCodeSize"
   };
 
    warning("\nThe %s is not large enough\n"
-           "to preload requested classes. Use -XX:%s=\n"
+           "to preload requested classes. Use -XX:%s=<size>\n"
            "to increase the initial size of %s.\n",
            name[shared_space], flag[shared_space], name[shared_space]);
    exit(2);

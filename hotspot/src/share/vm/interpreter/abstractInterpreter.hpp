@@ -42,8 +42,11 @@
 #ifdef TARGET_ARCH_MODEL_arm
 # include "interp_masm_arm.hpp"
 #endif
-#ifdef TARGET_ARCH_MODEL_ppc
-# include "interp_masm_ppc.hpp"
+#ifdef TARGET_ARCH_MODEL_ppc_32
+# include "interp_masm_ppc_32.hpp"
+#endif
+#ifdef TARGET_ARCH_MODEL_ppc_64
+# include "interp_masm_ppc_64.hpp"
 #endif
 
 // This file contains the platform-independent parts
@@ -178,30 +181,16 @@ class AbstractInterpreter: AllStatic {
   // Deoptimization should reexecute this bytecode
   static bool    bytecode_should_reexecute(Bytecodes::Code code);
 
-  // share implementation of size_activation and layout_activation:
-  static int        size_activation(Method* method,
+  // deoptimization support
+  static int        size_activation(int max_stack,
                                     int temps,
-                                    int popframe_args,
+                                    int extra_args,
                                     int monitors,
-                                    int caller_actual_parameters,
                                     int callee_params,
                                     int callee_locals,
-                                    bool is_top_frame,
-                                    bool is_bottom_frame) {
-    return layout_activation(method,
-                             temps,
-                             popframe_args,
-                             monitors,
-                             caller_actual_parameters,
-                             callee_params,
-                             callee_locals,
-                             (frame*)NULL,
-                             (frame*)NULL,
-                             is_top_frame,
-                             is_bottom_frame);
-  }
+                                    bool is_top_frame);
 
-  static int       layout_activation(Method* method,
+  static void      layout_activation(Method* method,
                                      int temps,
                                      int popframe_args,
                                      int monitors,

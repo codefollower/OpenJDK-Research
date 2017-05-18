@@ -88,9 +88,9 @@ void os::os_exception_wrapper(java_call_t f, JavaValue* value, methodHandle* met
     if ( ThreadLocalStorage::get_thread_ptr_offset() == 0 ) {
       int thread_ptr_offset;
       __asm {
-        lea eax, dword ptr wrapperthread; //把wrapperthread的地址放到eax中
-        sub eax, dword ptr FS:[0H]; //eax的值 - FS:[0H]对应的内存中的值，然后存到eax中
-        mov thread_ptr_offset, eax //通常是偏移-12，也就是0xfffffff4(这是补码，通过按位取反加１就能得到-12)
+        lea eax, dword ptr wrapperthread;
+        sub eax, dword ptr FS:[0H];
+        mov thread_ptr_offset, eax
       };
       ThreadLocalStorage::set_thread_ptr_offset(thread_ptr_offset);
     }
@@ -635,7 +635,11 @@ void os::setup_fpu() {
 #ifndef PRODUCT
 void os::verify_stack_alignment() {
 #ifdef AMD64
-  assert(((intptr_t)os::current_stack_pointer() & (StackAlignmentInBytes-1)) == 0, "incorrect stack alignment");
+  // The current_stack_pointer() calls generated get_previous_sp stub routine.
+  // Only enable the assert after the routine becomes available.
+  if (StubRoutines::code1() != NULL) {
+    assert(((intptr_t)os::current_stack_pointer() & (StackAlignmentInBytes-1)) == 0, "incorrect stack alignment");
+  }
 #endif
 }
 #endif

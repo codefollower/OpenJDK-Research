@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1999, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1999, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -87,6 +87,8 @@
 #define SPELL_REG_SP "esp"
 #define SPELL_REG_FP "ebp"
 #endif // AMD64
+
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 address os::current_stack_pointer() {
 #ifdef SPARC_WORKS
@@ -335,6 +337,11 @@ JVM_handle_linux_signal(int sig,
           }
         }
       }
+    }
+
+    if ((sig == SIGSEGV) && VM_Version::is_cpuinfo_segv_addr(pc)) {
+      // Verify that OS save/restore AVX registers.
+      stub = VM_Version::cpuinfo_cont_addr();
     }
 
     if (thread->thread_state() == _thread_in_Java) {
@@ -902,7 +909,7 @@ void os::workaround_expand_exec_shield_cs_limit() {
    */
   char* hint = (char*) (Linux::initial_thread_stack_bottom() -
                         ((StackYellowPages + StackRedPages + 1) * page_size));
-  char* codebuf = os::reserve_memory(page_size, hint);
+  char* codebuf = os::attempt_reserve_memory_at(page_size, hint);
   if ( (codebuf == NULL) || (!os::commit_memory(codebuf, page_size, true)) ) {
     return; // No matter, we tried, best effort.
   }

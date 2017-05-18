@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -51,6 +51,7 @@
 #include "runtime/javaCalls.hpp"
 #include "runtime/mutexLocker.hpp"
 #include "runtime/objectMonitor.hpp"
+#include "runtime/orderAccess.inline.hpp"
 #include "runtime/osThread.hpp"
 #include "runtime/perfMemory.hpp"
 #include "runtime/sharedRuntime.hpp"
@@ -130,6 +131,7 @@ BOOL WINAPI DllMain(HINSTANCE hinst, DWORD reason, LPVOID reserved) {
     case DLL_PROCESS_DETACH:
       if(ForceTimeHighResolution)
         timeEndPeriod(1L);
+
       break;
     default:
       break;
@@ -152,6 +154,10 @@ bool os::getenv(const char* name, char* buffer, int len) {
  return result > 0 && result < len;
 }
 
+bool os::unsetenv(const char* name) {
+  assert(name != NULL, "Null pointer");
+  return (SetEnvironmentVariable(name, NULL) == TRUE);
+}
 
 // No setuid programs under Windows.
 bool os::have_special_privileges() {
@@ -181,8 +187,6 @@ void os::init_system_properties_values() {
       char *bin = "\\bin";
       char home_dir[MAX_PATH];
 
-      //Windows7中可以通过"计算机->属性->高级系统设置->环境变量"来添加_ALT_JAVA_HOME_DIR变量
-      //设置完之后要重启Visual Studio才会生效
       if (!getenv("_ALT_JAVA_HOME_DIR", home_dir, MAX_PATH)) {
           os::jvm_path(home_dir, sizeof(home_dir));
           // Found the full path to jvm.dll.
@@ -312,15 +316,17 @@ extern "C" void breakpoint() {
  * So far, this method is only used by Native Memory Tracking, which is
  * only supported on Windows XP or later.
  */
-address os::get_caller_pc(int n) {
+
+int os::get_native_stack(address* stack, int frames, int toSkip) {
 #ifdef _NMT_NOINLINE_
-  n ++;
+  toSkip ++;
 #endif
-  address pc;
-  if (os::Kernel32Dll::RtlCaptureStackBackTrace(n + 1, 1, (PVOID*)&pc, NULL) == 1) {
-    return pc;
+  int captured = Kernel32Dll::RtlCaptureStackBackTrace(toSkip + 1, frames,
+    (PVOID*)stack, NULL);
+  for (int index = captured; index < frames; index ++) {
+    stack[index] = NULL;
   }
-  return NULL;
+  return captured;
 }
 
 
@@ -1644,96 +1650,123 @@ void os::print_os_info(outputStream* st) {
 
 void os::win32::print_windows_version(outputStream* st) {
   OSVERSIONINFOEX osvi;
-  SYSTEM_INFO si;
+  VS_FIXEDFILEINFO *file_info;
+  TCHAR kernel32_path[MAX_PATH];
+  UINT len, ret;
 
+  // Use the GetVersionEx information to see if we're on a server or
+  // workstation edition of Windows. Starting with Windows 8.1 we can't
+  // trust the OS version information returned by this API.
   ZeroMemory(&osvi, sizeof(OSVERSIONINFOEX));
   osvi.dwOSVersionInfoSize = sizeof(OSVERSIONINFOEX);
-
   if (!GetVersionEx((OSVERSIONINFO *)&osvi)) {
-    st->print_cr("N/A");
+    st->print_cr("Call to GetVersionEx failed");
+    return;
+  }
+  bool is_workstation = (osvi.wProductType == VER_NT_WORKSTATION);
+
+  // Get the full path to \Windows\System32\kernel32.dll and use that for
+  // determining what version of Windows we're running on.
+  len = MAX_PATH - (UINT)strlen("\\kernel32.dll") - 1;
+  ret = GetSystemDirectory(kernel32_path, len);
+  if (ret == 0 || ret > len) {
+    st->print_cr("Call to GetSystemDirectory failed");
+    return;
+  }
+  strncat(kernel32_path, "\\kernel32.dll", MAX_PATH - ret);
+
+  DWORD version_size = GetFileVersionInfoSize(kernel32_path, NULL);
+  if (version_size == 0) {
+    st->print_cr("Call to GetFileVersionInfoSize failed");
     return;
   }
 
-  int os_vers = osvi.dwMajorVersion * 1000 + osvi.dwMinorVersion;
+  LPTSTR version_info = (LPTSTR)os::malloc(version_size, mtInternal);
+  if (version_info == NULL) {
+    st->print_cr("Failed to allocate version_info");
+    return;
+  }
 
-  ZeroMemory(&si, sizeof(SYSTEM_INFO));
-  if (os_vers >= 5002) {
-    // Retrieve SYSTEM_INFO from GetNativeSystemInfo call so that we could
-    // find out whether we are running on 64 bit processor or not.
-    if (os::Kernel32Dll::GetNativeSystemInfoAvailable()) {
-      os::Kernel32Dll::GetNativeSystemInfo(&si);
+  if (!GetFileVersionInfo(kernel32_path, NULL, version_size, version_info)) {
+    os::free(version_info);
+    st->print_cr("Call to GetFileVersionInfo failed");
+    return;
+  }
+
+  if (!VerQueryValue(version_info, TEXT("\\"), (LPVOID*)&file_info, &len)) {
+    os::free(version_info);
+    st->print_cr("Call to VerQueryValue failed");
+    return;
+  }
+
+  int major_version = HIWORD(file_info->dwProductVersionMS);
+  int minor_version = LOWORD(file_info->dwProductVersionMS);
+  int build_number = HIWORD(file_info->dwProductVersionLS);
+  int build_minor = LOWORD(file_info->dwProductVersionLS);
+  int os_vers = major_version * 1000 + minor_version;
+  os::free(version_info);
+
+  st->print(" Windows ");
+  switch (os_vers) {
+
+  case 6000:
+    if (is_workstation) {
+      st->print("Vista");
     } else {
-      GetSystemInfo(&si);
+      st->print("Server 2008");
     }
+    break;
+
+  case 6001:
+    if (is_workstation) {
+      st->print("7");
+    } else {
+      st->print("Server 2008 R2");
+    }
+    break;
+
+  case 6002:
+    if (is_workstation) {
+      st->print("8");
+    } else {
+      st->print("Server 2012");
+    }
+    break;
+
+  case 6003:
+    if (is_workstation) {
+      st->print("8.1");
+    } else {
+      st->print("Server 2012 R2");
+    }
+    break;
+
+  case 6004:
+    if (is_workstation) {
+      st->print("10");
+    } else {
+      // The server version name of Windows 10 is not known at this time
+      st->print("%d.%d", major_version, minor_version);
+    }
+    break;
+
+  default:
+    // Unrecognized windows, print out its major and minor versions
+    st->print("%d.%d", major_version, minor_version);
+    break;
   }
 
-  if (osvi.dwPlatformId == VER_PLATFORM_WIN32_NT) {
-    switch (os_vers) {
-    case 3051: st->print(" Windows NT 3.51"); break;
-    case 4000: st->print(" Windows NT 4.0"); break;
-    case 5000: st->print(" Windows 2000"); break;
-    case 5001: st->print(" Windows XP"); break;
-    case 5002:
-      if (osvi.wProductType == VER_NT_WORKSTATION &&
-          si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64) {
-        st->print(" Windows XP x64 Edition");
-      } else {
-        st->print(" Windows Server 2003 family");
-      }
-      break;
-
-    case 6000:
-      if (osvi.wProductType == VER_NT_WORKSTATION) {
-        st->print(" Windows Vista");
-      } else {
-        st->print(" Windows Server 2008");
-      }
-      break;
-
-    case 6001:
-      if (osvi.wProductType == VER_NT_WORKSTATION) {
-        st->print(" Windows 7");
-      } else {
-        st->print(" Windows Server 2008 R2");
-      }
-      break;
-
-    case 6002:
-      if (osvi.wProductType == VER_NT_WORKSTATION) {
-        st->print(" Windows 8");
-      } else {
-        st->print(" Windows Server 2012");
-      }
-      break;
-
-    case 6003:
-      if (osvi.wProductType == VER_NT_WORKSTATION) {
-        st->print(" Windows 8.1");
-      } else {
-        st->print(" Windows Server 2012 R2");
-      }
-      break;
-
-    default: // future os
-      // Unrecognized windows, print out its major and minor versions
-      st->print(" Windows NT %d.%d", osvi.dwMajorVersion, osvi.dwMinorVersion);
-    }
-  } else {
-    switch (os_vers) {
-    case 4000: st->print(" Windows 95"); break;
-    case 4010: st->print(" Windows 98"); break;
-    case 4090: st->print(" Windows Me"); break;
-    default: // future windows, print out its major and minor versions
-      st->print(" Windows %d.%d", osvi.dwMajorVersion, osvi.dwMinorVersion);
-    }
-  }
-
-  if (os_vers >= 6000 && si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64) {
+  // Retrieve SYSTEM_INFO from GetNativeSystemInfo call so that we could
+  // find out whether we are running on 64 bit processor or not
+  SYSTEM_INFO si;
+  ZeroMemory(&si, sizeof(SYSTEM_INFO));
+  os::Kernel32Dll::GetNativeSystemInfo(&si);
+  if (si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64) {
     st->print(" , 64 bit");
   }
 
-  st->print(" Build %d", osvi.dwBuildNumber);
-  st->print(" %s", osvi.szCSDVersion);           // service pack
+  st->print(" Build %d", build_number);
+  st->print(" (%d.%d.%d.%d)", major_version, minor_version, build_number, build_minor);
   st->cr();
 }
 
@@ -1800,8 +1833,6 @@ void os::print_signal_handlers(outputStream* st, char* buf, size_t buflen) {
 static char saved_jvm_path[MAX_PATH] = {0};
 
 // Find the full path to the current module, jvm.dll
-//如果JAVA_HOME是D:\JavaSE1.8
-//返回类似这样的结果: D:\JavaSE1.8\jre\bin\hotspot\jvm.dll
 void os::jvm_path(char *buf, jint buflen) {
   // Error checking.
   if (buflen < MAX_PATH) {
@@ -1823,7 +1854,8 @@ void os::jvm_path(char *buf, jint buflen) {
      // libjvm.so is installed there (append a fake suffix
      // hotspot/libjvm.so).
      char* java_home_var = ::getenv("JAVA_HOME");
-     if (java_home_var != NULL && java_home_var[0] != 0) {
+     if (java_home_var != NULL && java_home_var[0] != 0 &&
+         strlen(java_home_var) < (size_t)buflen) {
 
         strncpy(buf, java_home_var, buflen);
 
@@ -1841,9 +1873,9 @@ void os::jvm_path(char *buf, jint buflen) {
   }
 
   if(buf[0] == '\0') {
-  GetModuleFileName(vm_lib_handle, buf, buflen);
+    GetModuleFileName(vm_lib_handle, buf, buflen);
   }
-  strcpy(saved_jvm_path, buf);
+  strncpy(saved_jvm_path, buf, MAX_PATH);
 }
 
 
@@ -2294,19 +2326,8 @@ LONG WINAPI Handle_FLT_Exception(struct _EXCEPTION_POINTERS* exceptionInfo) {
       }
 
 */
-#endif //_WIN64
+#endif // _WIN64
 
-
-// Fatal error reporting is single threaded so we can make this a
-// static and preallocated.  If it's more than MAX_PATH silently ignore
-// it.
-static char saved_error_file[MAX_PATH] = {0};
-
-void os::set_error_file(const char *logfile) {
-  if (strlen(logfile) <= MAX_PATH) {
-    strncpy(saved_error_file, logfile, MAX_PATH);
-  }
-}
 
 static inline void report_error(Thread* t, DWORD exception_code,
                                 address addr, void* siginfo, void* context) {
@@ -2439,6 +2460,12 @@ LONG WINAPI topLevelExceptionFilter(struct _EXCEPTION_POINTERS* exceptionInfo) {
       os::block_on_serialize_page_trap();
       return EXCEPTION_CONTINUE_EXECUTION;
     }
+  }
+
+  if ((exception_code == EXCEPTION_ACCESS_VIOLATION) &&
+      VM_Version::is_cpuinfo_segv_addr(pc)) {
+    // Verify that OS save/restore AVX registers.
+    return Handle_Exception(exceptionInfo, VM_Version::cpuinfo_cont_addr());
   }
 
   if (t != NULL && t->is_Java_thread()) {
@@ -2714,7 +2741,6 @@ address os::win32::fast_jni_accessor_wrapper(BasicType type) {
 }
 #endif
 
-#ifndef PRODUCT
 void os::win32::call_test_func_with_wrapper(void (*funcPtr)(void)) {
   // Install a win32 structured exception handler around the test
   // function call so the VM can generate an error dump if needed.
@@ -2725,7 +2751,6 @@ void os::win32::call_test_func_with_wrapper(void (*funcPtr)(void)) {
     // Nothing to do.
   }
 }
-#endif
 
 // Virtual Memory
 
@@ -2913,7 +2938,7 @@ static char* allocate_pages_individually(size_t bytes, char* addr, DWORD flags, 
                                 PAGE_READWRITE);
   // If reservation failed, return NULL
   if (p_buf == NULL) return NULL;
-  MemTracker::record_virtual_memory_reserve((address)p_buf, size_of_reserve, mtNone, CALLER_PC);
+  MemTracker::record_virtual_memory_reserve((address)p_buf, size_of_reserve, CALLER_PC);
   os::release_memory(p_buf, bytes + chunk_size);
 
   // we still need to round up to a page boundary (in case we are using large pages)
@@ -2979,7 +3004,7 @@ static char* allocate_pages_individually(size_t bytes, char* addr, DWORD flags, 
         // need to create a dummy 'reserve' record to match
         // the release.
         MemTracker::record_virtual_memory_reserve((address)p_buf,
-          bytes_to_release, mtNone, CALLER_PC);
+          bytes_to_release, CALLER_PC);
         os::release_memory(p_buf, bytes_to_release);
       }
 #ifdef ASSERT
@@ -2998,11 +3023,10 @@ static char* allocate_pages_individually(size_t bytes, char* addr, DWORD flags, 
   }
   // Although the memory is allocated individually, it is returned as one.
   // NMT records it as one block.
-  address pc = CALLER_PC;
   if ((flags & MEM_COMMIT) != 0) {
-    MemTracker::record_virtual_memory_reserve_and_commit((address)p_buf, bytes, mtNone, pc);
+    MemTracker::record_virtual_memory_reserve_and_commit((address)p_buf, bytes, CALLER_PC);
   } else {
-    MemTracker::record_virtual_memory_reserve((address)p_buf, bytes, mtNone, pc);
+    MemTracker::record_virtual_memory_reserve((address)p_buf, bytes, CALLER_PC);
   }
 
   // made it this far, success
@@ -3200,8 +3224,7 @@ char* os::reserve_memory_special(size_t bytes, size_t alignment, char* addr, boo
     DWORD flag = MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES;
     char * res = (char *)VirtualAlloc(addr, bytes, flag, prot);
     if (res != NULL) {
-      address pc = CALLER_PC;
-      MemTracker::record_virtual_memory_reserve_and_commit((address)res, bytes, mtNone, pc);
+      MemTracker::record_virtual_memory_reserve_and_commit((address)res, bytes, CALLER_PC);
     }
 
     return res;
@@ -3500,6 +3523,16 @@ int os::sleep(Thread* thread, jlong ms, bool interruptable) {
   return result;
 }
 
+//
+// Short sleep, direct OS call.
+//
+// ms = 0, means allow others (if any) to run.
+//
+void os::naked_short_sleep(jlong ms) {
+  assert(ms < 1000, "Un-interruptable sleep, short time use only");
+  Sleep(ms);
+}
+
 // Sleep forever; naked call to OS-specific sleep; use with CAUTION
 void os::infinite_sleep() {
   while (true) {    // sleep forever ...
@@ -3627,13 +3660,14 @@ bool os::is_interrupted(Thread* thread, bool clear_interrupted) {
          "possibility of dangling Thread pointer");
 
   OSThread* osthread = thread->osthread();
-  bool interrupted = osthread->interrupted();
   // There is no synchronization between the setting of the interrupt
   // and it being cleared here. It is critical - see 6535709 - that
   // we only clear the interrupt state, and reset the interrupt event,
   // if we are going to report that we were indeed interrupted - else
   // an interrupt can be "lost", leading to spurious wakeups or lost wakeups
-  // depending on the timing
+  // depending on the timing. By checking thread interrupt event to see
+  // if the thread gets real interrupt thus prevent spurious wakeup.
+  bool interrupted = osthread->interrupted() && (WaitForSingleObject(osthread->interrupt_event(), 0) == WAIT_OBJECT_0);
   if (interrupted && clear_interrupted) {
     osthread->set_interrupted(false);
     ResetEvent(osthread->interrupt_event());
@@ -3857,7 +3891,7 @@ void nx_check_protection() {
 
 // this is called _before_ the global arguments have been parsed
 void os::init(void) {
-  _initial_pid = _getpid(); //在%VS_HOME%\VC\include\process.h中定义_getpid
+  _initial_pid = _getpid();
 
   init_random(1234567);
 
@@ -4021,7 +4055,7 @@ jint os::init_2(void) {
     if (!success) UseNUMAInterleaving = false;
   }
 
-  if (initSock() != JNI_OK) { //只要用到Winsock或DLL首先需要调用WSAStartup
+  if (initSock() != JNI_OK) {
     return JNI_ERR;
   }
 
@@ -5341,11 +5375,6 @@ inline BOOL os::Kernel32Dll::Module32First(HANDLE hSnapshot,LPMODULEENTRY32 lpme
 
 inline BOOL os::Kernel32Dll::Module32Next(HANDLE hSnapshot,LPMODULEENTRY32 lpme) {
   return ::Module32Next(hSnapshot, lpme);
-}
-
-
-inline BOOL os::Kernel32Dll::GetNativeSystemInfoAvailable() {
-  return true;
 }
 
 inline void os::Kernel32Dll::GetNativeSystemInfo(LPSYSTEM_INFO lpSystemInfo) {

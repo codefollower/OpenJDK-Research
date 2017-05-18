@@ -25,6 +25,7 @@
 #ifndef SHARE_VM_MEMORY_REFERENCEPROCESSOR_HPP
 #define SHARE_VM_MEMORY_REFERENCEPROCESSOR_HPP
 
+#include "gc_implementation/shared/gcTrace.hpp"
 #include "memory/referencePolicy.hpp"
 #include "memory/referenceProcessorStats.hpp"
 #include "memory/referenceType.hpp"
@@ -227,15 +228,6 @@ class ReferenceProcessor : public CHeapObj<mtGC> {
                                         // other collectors in configuration
   bool        _discovery_is_mt;         // true if reference discovery is MT.
 
-  // If true, setting "next" field of a discovered refs list requires
-  // write barrier(s).  (Must be true if used in a collector in which
-  // elements of a discovered list may be moved during discovery: for
-  // example, a collector like Garbage-First that moves objects during a
-  // long-term concurrent marking phase that does weak reference
-  // discovery.)
-  bool        _discovered_list_needs_barrier;
-
-  BarrierSet* _bs;                      // Cached copy of BarrierSet.
   bool        _enqueuing_is_done;       // true if all weak references enqueued
   bool        _processing_is_mt;        // true during phases when
                                         // reference processing is MT.
@@ -272,9 +264,10 @@ class ReferenceProcessor : public CHeapObj<mtGC> {
   DiscoveredList* _discoveredWeakRefs;
   DiscoveredList* _discoveredFinalRefs;
   DiscoveredList* _discoveredPhantomRefs;
+  DiscoveredList* _discoveredCleanerRefs;
 
  public:
-  static int number_of_subclasses_of_ref() { return (REF_PHANTOM - REF_OTHER); }
+  static int number_of_subclasses_of_ref() { return (REF_CLEANER - REF_OTHER); }
 
   uint num_q()                             { return _num_q; }
   uint max_num_q()                         { return _max_num_q; }
@@ -358,7 +351,8 @@ class ReferenceProcessor : public CHeapObj<mtGC> {
                                       OopClosure*        keep_alive,
                                       VoidClosure*       complete_gc,
                                       YieldClosure*      yield,
-                                      GCTimer*           gc_timer);
+                                      GCTimer*           gc_timer,
+                                      GCId               gc_id);
 
   // Delete entries in the discovered lists that have
   // either a null referent or are not active. Such
@@ -380,11 +374,6 @@ class ReferenceProcessor : public CHeapObj<mtGC> {
   void enqueue_discovered_reflists(HeapWord* pending_list_addr, AbstractRefProcTaskExecutor* task_executor);
 
  protected:
-  // Set the 'discovered' field of the given reference to
-  // the given value - emitting barriers depending upon
-  // the value of _discovered_list_needs_barrier.
-  void set_discovered(oop ref, oop value);
-
   // "Preclean" the given discovered reference list
   // by removing references with strongly reachable referents.
   // Currently used in support of CMS only.
@@ -420,32 +409,12 @@ class ReferenceProcessor : public CHeapObj<mtGC> {
   void update_soft_ref_master_clock();
 
  public:
-  // constructor
-  ReferenceProcessor():
-    _span((HeapWord*)NULL, (HeapWord*)NULL),
-    _discovered_refs(NULL),
-    _discoveredSoftRefs(NULL),  _discoveredWeakRefs(NULL),
-    _discoveredFinalRefs(NULL), _discoveredPhantomRefs(NULL),
-    _discovering_refs(false),
-    _discovery_is_atomic(true),
-    _enqueuing_is_done(false),
-    _discovery_is_mt(false),
-    _discovered_list_needs_barrier(false),
-    _bs(NULL),
-    _is_alive_non_header(NULL),
-    _num_q(0),
-    _max_num_q(0),
-    _processing_is_mt(false),
-    _next_id(0)
-  { }
-
   // Default parameters give you a vanilla reference processor.
   ReferenceProcessor(MemRegion span,
                      bool mt_processing = false, uint mt_processing_degree = 1,
                      bool mt_discovery  = false, uint mt_discovery_degree  = 1,
                      bool atomic_discovery = true,
-                     BoolObjectClosure* is_alive_non_header = NULL,
-                     bool discovered_list_needs_barrier = false);
+                     BoolObjectClosure* is_alive_non_header = NULL);
 
   // RefDiscoveryPolicy values
   enum DiscoveryPolicy {
@@ -514,7 +483,8 @@ class ReferenceProcessor : public CHeapObj<mtGC> {
                                 OopClosure*                  keep_alive,
                                 VoidClosure*                 complete_gc,
                                 AbstractRefProcTaskExecutor* task_executor,
-                                GCTimer *gc_timer);
+                                GCTimer *gc_timer,
+                                GCId    gc_id);
 
   // Enqueue references at end of GC (called by the garbage collector)
   bool enqueue_discovered_references(AbstractRefProcTaskExecutor* task_executor = NULL);

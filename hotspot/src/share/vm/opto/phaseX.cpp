@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -321,6 +321,23 @@ void NodeHash::remove_useless_nodes(VectorSet &useful) {
       _table[i] = sentinel_node;       // Replace with placeholder
     }
   }
+}
+
+
+void NodeHash::check_no_speculative_types() {
+#ifdef ASSERT
+  uint max = size();
+  Node *sentinel_node = sentinel();
+  for (uint i = 0; i < max; ++i) {
+    Node *n = at(i);
+    if(n != NULL && n != sentinel_node && n->is_Type()) {
+      TypeNode* tn = n->as_Type();
+      const Type* t = tn->type();
+      const Type* t_no_spec = t->remove_speculative();
+      assert(t == t_no_spec, "dead node in hash table or missed node during speculative cleanup");
+    }
+  }
+#endif
 }
 
 #ifndef PRODUCT
@@ -985,10 +1002,10 @@ void PhaseIterGVN::optimize() {
   if ( VerifyIterativeGVN && PrintOpto ) {
     if ( _verify_counter == _verify_full_passes )
       tty->print_cr("VerifyIterativeGVN: %d transforms and verify passes",
-                    _verify_full_passes);
+                    (int) _verify_full_passes);
     else
       tty->print_cr("VerifyIterativeGVN: %d transforms, %d full verify passes",
-                  _verify_counter, _verify_full_passes);
+                  (int) _verify_counter, (int) _verify_full_passes);
   }
 #endif
 }
@@ -1323,15 +1340,27 @@ void PhaseIterGVN::add_users_to_worklist( Node *n ) {
       }
     }
 
-    if( use->is_Cmp() ) {       // Enable CMP/BOOL optimization
+    uint use_op = use->Opcode();
+    if(use->is_Cmp()) {       // Enable CMP/BOOL optimization
       add_users_to_worklist(use); // Put Bool on worklist
-      // Look for the 'is_x2logic' pattern: "x ? : 0 : 1" and put the
-      // phi merging either 0 or 1 onto the worklist
       if (use->outcnt() > 0) {
         Node* bol = use->raw_out(0);
         if (bol->outcnt() > 0) {
           Node* iff = bol->raw_out(0);
-          if (iff->outcnt() == 2) {
+          if (use_op == Op_CmpI &&
+              iff->is_CountedLoopEnd()) {
+            CountedLoopEndNode* cle = iff->as_CountedLoopEnd();
+            if (cle->limit() == n && cle->phi() != NULL) {
+              // If an opaque node feeds into the limit condition of a
+              // CountedLoop, we need to process the Phi node for the
+              // induction variable when the opaque node is removed:
+              // the range of values taken by the Phi is now known and
+              // so its type is also known.
+              _worklist.push(cle->phi());
+            }
+          } else if (iff->outcnt() == 2) {
+            // Look for the 'is_x2logic' pattern: "x ? : 0 : 1" and put the
+            // phi merging either 0 or 1 onto the worklist
             Node* ifproj0 = iff->raw_out(0);
             Node* ifproj1 = iff->raw_out(1);
             if (ifproj0->outcnt() > 0 && ifproj1->outcnt() > 0) {
@@ -1343,9 +1372,26 @@ void PhaseIterGVN::add_users_to_worklist( Node *n ) {
           }
         }
       }
+      if (use_op == Op_CmpI) {
+        Node* in1 = use->in(1);
+        for (uint i = 0; i < in1->outcnt(); i++) {
+          if (in1->raw_out(i)->Opcode() == Op_CastII) {
+            Node* castii = in1->raw_out(i);
+            if (castii->in(0) != NULL && castii->in(0)->in(0) != NULL && castii->in(0)->in(0)->is_If()) {
+              Node* ifnode = castii->in(0)->in(0);
+              if (ifnode->in(1) != NULL && ifnode->in(1)->is_Bool() && ifnode->in(1)->in(1) == use) {
+                // Reprocess a CastII node that may depend on an
+                // opaque node value when the opaque node is
+                // removed. In case it carries a dependency we can do
+                // a better job of computing its type.
+                _worklist.push(castii);
+              }
+            }
+          }
+        }
+      }
     }
 
-    uint use_op = use->Opcode();
     // If changed Cast input, check Phi users for simple cycles
     if( use->is_ConstraintCast() || use->is_CheckCastPP() ) {
       for (DUIterator_Fast i2max, i2 = use->fast_outs(i2max); i2 < i2max; i2++) {
@@ -1360,6 +1406,15 @@ void PhaseIterGVN::add_users_to_worklist( Node *n ) {
         Node* u = use->fast_out(i2);
         if (u->Opcode() == Op_RShiftI)
           _worklist.push(u);
+      }
+    }
+    // If changed AddI/SubI inputs, check CmpU for range check optimization.
+    if (use_op == Op_AddI || use_op == Op_SubI) {
+      for (DUIterator_Fast i2max, i2 = use->fast_outs(i2max); i2 < i2max; i2++) {
+        Node* u = use->fast_out(i2);
+        if (u->is_Cmp() && (u->Opcode() == Op_CmpU)) {
+          _worklist.push(u);
+        }
       }
     }
     // If changed AddP inputs, check Stores for loop invariant
@@ -1392,11 +1447,11 @@ void PhaseIterGVN::remove_speculative_types()  {
   assert(UseTypeSpeculation, "speculation is off");
   for (uint i = 0; i < _types.Size(); i++)  {
     const Type* t = _types.fast_lookup(i);
-    if (t != NULL && t->isa_oopptr()) {
-      const TypeOopPtr* to = t->is_oopptr();
-      _types.map(i, to->remove_speculative());
+    if (t != NULL) {
+      _types.map(i, t->remove_speculative());
     }
   }
+  _table.check_no_speculative_types();
 }
 
 //=============================================================================

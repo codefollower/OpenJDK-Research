@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -226,14 +226,16 @@ class InstanceKlass: public Klass {
   // _is_marked_dependent can be set concurrently, thus cannot be part of the
   // _misc_flags.
   bool            _is_marked_dependent;  // used for marking during flushing and deoptimization
+  bool            _has_unloaded_dependent;
 
   enum {
-    _misc_rewritten            = 1 << 0, // methods rewritten.
-    _misc_has_nonstatic_fields = 1 << 1, // for sizing with UseCompressedOops
-    _misc_should_verify_class  = 1 << 2, // allow caching of preverification
-    _misc_is_anonymous         = 1 << 3, // has embedded _host_klass field
-    _misc_is_contended         = 1 << 4, // marked with contended annotation
-    _misc_has_default_methods  = 1 << 5  // class/superclass/implemented interfaces has default methods
+    _misc_rewritten                = 1 << 0, // methods rewritten.
+    _misc_has_nonstatic_fields     = 1 << 1, // for sizing with UseCompressedOops
+    _misc_should_verify_class      = 1 << 2, // allow caching of preverification
+    _misc_is_anonymous             = 1 << 3, // has embedded _host_klass field
+    _misc_is_contended             = 1 << 4, // marked with contended annotation
+    _misc_has_default_methods      = 1 << 5, // class/superclass/implemented interfaces has default methods
+    _misc_declares_default_methods = 1 << 6  // directly declares default methods (any access)
   };
   u2              _misc_flags;
   u2              _minor_version;        // minor version number of class file
@@ -306,7 +308,7 @@ class InstanceKlass: public Klass {
   //   three cases:
   //     NULL: no implementor.
   //     A Klass* that's not itself: one implementor.
-  //     Itsef: more than one implementors.
+  //     Itself: more than one implementors.
   // embedded host klass follows here
   //   The embedded host klass only exists in an anonymous class for
   //   dynamic language support (JSR 292 enabled). The host class grants
@@ -473,6 +475,9 @@ class InstanceKlass: public Klass {
   bool is_marked_dependent() const         { return _is_marked_dependent; }
   void set_is_marked_dependent(bool value) { _is_marked_dependent = value; }
 
+  bool has_unloaded_dependent() const         { return _has_unloaded_dependent; }
+  void set_has_unloaded_dependent(bool value) { _has_unloaded_dependent = value; }
+
   // initialization (virtuals from Klass)
   bool should_be_initialized() const;  // means that initialize should be called
   void initialize(TRAPS);
@@ -515,17 +520,23 @@ class InstanceKlass: public Klass {
   // find a local method (returns NULL if not found)
   Method* find_method(Symbol* name, Symbol* signature) const;
   static Method* find_method(Array<Method*>* methods, Symbol* name, Symbol* signature);
+
+  // find a local method, but skip static methods
+  Method* find_instance_method(Symbol* name, Symbol* signature);
   static Method* find_instance_method(Array<Method*>* methods, Symbol* name, Symbol* signature);
 
+  // true if method matches signature and conforms to skipping_X conditions.
+  static bool method_matches(Method* m, Symbol* signature, bool skipping_overpass, bool skipping_static);
+
   // find a local method index in default_methods (returns -1 if not found)
-  static int find_method_index(Array<Method*>* methods, Symbol* name, Symbol* signature);
+  static int find_method_index(Array<Method*>* methods, Symbol* name, Symbol* signature, bool skipping_overpass, bool skipping_static);
 
   // lookup operation (returns NULL if not found)
-  Method* uncached_lookup_method(Symbol* name, Symbol* signature) const;
+  Method* uncached_lookup_method(Symbol* name, Symbol* signature, MethodLookupMode mode) const;
 
   // lookup a method in all the interfaces that this class implements
   // (returns NULL if not found)
-  Method* lookup_method_in_all_interfaces(Symbol* name, Symbol* signature, bool skip_default_methods) const;
+  Method* lookup_method_in_all_interfaces(Symbol* name, Symbol* signature, MethodLookupMode mode) const;
 
   // lookup a method in local defaults then in all interfaces
   // (returns NULL if not found)
@@ -554,6 +565,7 @@ class InstanceKlass: public Klass {
     if (hk == NULL) {
       return NULL;
     } else {
+      assert(*hk != NULL, "host klass should always be set if the address is not null");
       return *hk;
     }
   }
@@ -675,6 +687,17 @@ class InstanceKlass: public Klass {
     }
   }
 
+  bool declares_default_methods() const {
+    return (_misc_flags & _misc_declares_default_methods) != 0;
+  }
+  void set_declares_default_methods(bool b) {
+    if (b) {
+      _misc_flags |= _misc_declares_default_methods;
+    } else {
+      _misc_flags &= ~_misc_declares_default_methods;
+    }
+  }
+
   // for adding methods, ConstMethod::UNSET_IDNUM means no more ids available
   inline u2 next_method_idnum();
   void set_initial_method_idnum(u2 value)             { _idnum_allocated_count = value; }
@@ -766,6 +789,7 @@ class InstanceKlass: public Klass {
   void set_osr_nmethods_head(nmethod* h)     { _osr_nmethods_head = h; };
   void add_osr_nmethod(nmethod* n);
   void remove_osr_nmethod(nmethod* n);
+  int mark_osr_nmethods(const Method* m);
   nmethod* lookup_osr_nmethod(const Method* m, int bci, int level, bool match_level) const;
 
   // Breakpoint support (see methods on Method* for details)
@@ -829,7 +853,7 @@ class InstanceKlass: public Klass {
   // Iterators
   void do_local_static_fields(FieldClosure* cl);
   void do_nonstatic_fields(FieldClosure* cl); // including inherited fields
-  void do_local_static_fields(void f(fieldDescriptor*, TRAPS), TRAPS);
+  void do_local_static_fields(void f(fieldDescriptor*, Handle, TRAPS), Handle, TRAPS);
 
   void methods_do(void f(Method* method));
   void array_klasses_do(void f(Klass* k));
@@ -945,6 +969,7 @@ class InstanceKlass: public Klass {
 
   void clean_implementors_list(BoolObjectClosure* is_alive);
   void clean_method_data(BoolObjectClosure* is_alive);
+  void clean_dependent_nmethods();
 
   // Explicit metaspace deallocation of fields
   // For RedefineClasses and class file parsing errors, we need to deallocate
@@ -998,6 +1023,13 @@ class InstanceKlass: public Klass {
 
   u2 idnum_allocated_count() const      { return _idnum_allocated_count; }
 
+public:
+  void set_in_error_state() {
+    assert(DumpSharedSpaces, "only call this when dumping archive");
+    _init_state = initialization_error;
+  }
+  bool check_sharing_error_state();
+
 private:
   // initialization state
 #ifdef ASSERT
@@ -1033,11 +1065,12 @@ private:
   static bool link_class_impl                           (instanceKlassHandle this_oop, bool throw_verifyerror, TRAPS);
   static bool verify_code                               (instanceKlassHandle this_oop, bool throw_verifyerror, TRAPS);
   static void initialize_impl                           (instanceKlassHandle this_oop, TRAPS);
+  static void initialize_super_interfaces               (instanceKlassHandle this_oop, TRAPS);
   static void eager_initialize_impl                     (instanceKlassHandle this_oop);
   static void set_initialization_state_and_notify_impl  (instanceKlassHandle this_oop, ClassState state, TRAPS);
   static void call_class_initializer_impl               (instanceKlassHandle this_oop, TRAPS);
   static Klass* array_klass_impl                      (instanceKlassHandle this_oop, bool or_null, int n, TRAPS);
-  static void do_local_static_fields_impl               (instanceKlassHandle this_oop, void f(fieldDescriptor* fd, TRAPS), TRAPS);
+  static void do_local_static_fields_impl               (instanceKlassHandle this_oop, void f(fieldDescriptor* fd, Handle, TRAPS), Handle, TRAPS);
   /* jni_id_for_impl for jfieldID only */
   static JNIid* jni_id_for_impl                         (instanceKlassHandle this_oop, int offset);
 
@@ -1047,12 +1080,16 @@ private:
   // Returns the array class with this class as element type
   Klass* array_klass_impl(bool or_null, TRAPS);
 
+  // find a local method (returns NULL if not found)
+  Method* find_method_impl(Symbol* name, Symbol* signature, bool skipping_overpass) const;
+  static Method* find_method_impl(Array<Method*>* methods, Symbol* name, Symbol* signature, bool skipping_overpass, bool skipping_static);
+
   // Free CHeap allocated fields.
   void release_C_heap_structures();
 public:
   // CDS support - remove and restore oops from metadata. Oops are not shared.
   virtual void remove_unshareable_info();
-  virtual void restore_unshareable_info(TRAPS);
+  virtual void restore_unshareable_info(ClassLoaderData* loader_data, Handle protection_domain, TRAPS);
 
   // jvm support
   jint compute_modifier_flags(TRAPS) const;
@@ -1060,8 +1097,7 @@ public:
   // JSR-292 support
   MemberNameTable* member_names() { return _member_names; }
   void set_member_names(MemberNameTable* member_names) { _member_names = member_names; }
-  void add_member_name(int index, Handle member_name);
-  oop  get_member_name(int index);
+  bool add_member_name(Handle member_name);
 
 public:
   // JVMTI support
@@ -1086,7 +1122,7 @@ public:
   const char* internal_name() const;
 
   // Verification
-  void verify_on(outputStream* st, bool check_dictionary);
+  void verify_on(outputStream* st);
 
   void oop_verify_on(oop obj, outputStream* st);
 };
@@ -1229,7 +1265,7 @@ class nmethodBucket: public CHeapObj<mtClass> {
   }
   int count()                             { return _count; }
   int increment()                         { _count += 1; return _count; }
-  int decrement()                         { _count -= 1; assert(_count >= 0, "don't underflow"); return _count; }
+  int decrement();
   nmethodBucket* next()                   { return _next; }
   void set_next(nmethodBucket* b)         { _next = b; }
   nmethod* get_nmethod()                  { return _nmethod; }

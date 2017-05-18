@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 1997, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 1997, 2014, Oracle and/or its affiliates. All rights reserved.
  * Copyright (c) 2012 Red Hat, Inc.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
@@ -67,11 +67,13 @@
 #include "runtime/java.hpp"
 #include "runtime/javaCalls.hpp"
 #include "runtime/jfieldIDWorkaround.hpp"
+#include "runtime/orderAccess.inline.hpp"
 #include "runtime/reflection.hpp"
 #include "runtime/sharedRuntime.hpp"
 #include "runtime/signature.hpp"
 #include "runtime/thread.inline.hpp"
 #include "runtime/vm_operations.hpp"
+#include "services/memTracker.hpp"
 #include "services/runtimeService.hpp"
 #include "trace/tracing.hpp"
 #include "utilities/defaultStream.hpp"
@@ -291,15 +293,6 @@ void jfieldIDWorkaround::verify_instance_jfieldID(Klass* k, jfieldID id) {
       "Bug in native code: jfieldID offset must address interior of object");
 }
 
-// Pick a reasonable higher bound for local capacity requested
-// for EnsureLocalCapacity and PushLocalFrame.  We don't want it too
-// high because a test (or very unusual application) may try to allocate
-// that many handles and run out of swap space.  An implementation is
-// permitted to allocate more handles than the ensured capacity, so this
-// value is set high enough to prevent compatibility problems.
-const int MAX_REASONABLE_LOCAL_CAPACITY = 4*K;
-
-
 // Wrapper to trace JNI functions
 
 #ifdef ASSERT
@@ -308,7 +301,7 @@ const int MAX_REASONABLE_LOCAL_CAPACITY = 4*K;
 
   class JNITraceWrapper : public StackObj {
    public:
-    JNITraceWrapper(const char* format, ...) {
+    JNITraceWrapper(const char* format, ...) ATTRIBUTE_PRINTF(2, 3) {
       if (TraceJNICalls) {
         va_list ap;
         va_start(ap, format);
@@ -879,7 +872,8 @@ JNI_ENTRY(jint, jni_PushLocalFrame(JNIEnv *env, jint capacity))
                                    env, capacity);
 #endif /* USDT2 */
   //%note jni_11
-  if (capacity < 0 || capacity > MAX_REASONABLE_LOCAL_CAPACITY) {
+  if (capacity < 0 ||
+      ((MaxJNILocalCapacity > 0) && (capacity > MaxJNILocalCapacity))) {
 #ifndef USDT2
     DTRACE_PROBE1(hotspot_jni, PushLocalFrame__return, JNI_ERR);
 #else /* USDT2 */
@@ -1038,7 +1032,8 @@ JNI_LEAF(jint, jni_EnsureLocalCapacity(JNIEnv *env, jint capacity))
                                         env, capacity);
 #endif /* USDT2 */
   jint ret;
-  if (capacity >= 0 && capacity <= MAX_REASONABLE_LOCAL_CAPACITY) {
+  if (capacity >= 0 &&
+      ((MaxJNILocalCapacity <= 0) || (capacity <= MaxJNILocalCapacity))) {
     ret = JNI_OK;
   } else {
     ret = JNI_ERR;
@@ -1356,9 +1351,13 @@ static void jni_invoke_nonstatic(JNIEnv *env, JavaValue* result, jobject receive
       // interface call
       KlassHandle h_holder(THREAD, holder);
 
-      int itbl_index = m->itable_index();
-      Klass* k = h_recv->klass();
-      selected_method = InstanceKlass::cast(k)->method_at_itable(h_holder(), itbl_index, CHECK);
+      if (call_type == JNI_VIRTUAL) {
+        int itbl_index = m->itable_index();
+        Klass* k = h_recv->klass();
+        selected_method = InstanceKlass::cast(k)->method_at_itable(h_holder(), itbl_index, CHECK);
+      } else {
+        selected_method = m;
+      }
     }
   }
 
@@ -3584,6 +3583,7 @@ static char* get_bad_address() {
     if (bad_address != NULL) {
       os::protect_memory(bad_address, size, os::MEM_PROT_READ,
                          /*is_committed*/false);
+      MemTracker::record_virtual_memory_type((void*)bad_address, mtInternal);
     }
   }
   return bad_address;
@@ -4446,8 +4446,23 @@ static bool initializeDirectBufferSupport(JNIEnv* env, JavaThread* thread) {
 
     // Get needed field and method IDs
     directByteBufferConstructor = env->GetMethodID(directByteBufferClass, "<init>", "(JI)V");
+    if (env->ExceptionCheck()) {
+      env->ExceptionClear();
+      directBufferSupportInitializeFailed = 1;
+      return false;
+    }
     directBufferAddressField    = env->GetFieldID(bufferClass, "address", "J");
+    if (env->ExceptionCheck()) {
+      env->ExceptionClear();
+      directBufferSupportInitializeFailed = 1;
+      return false;
+    }
     bufferCapacityField         = env->GetFieldID(bufferClass, "capacity", "I");
+    if (env->ExceptionCheck()) {
+      env->ExceptionClear();
+      directBufferSupportInitializeFailed = 1;
+      return false;
+    }
 
     if ((directByteBufferConstructor == NULL) ||
         (directBufferAddressField    == NULL) ||
@@ -5044,6 +5059,7 @@ _JNI_IMPORT_OR_EXPORT_ jint JNICALL JNI_GetDefaultJavaVMInitArgs(void *args_) {
 #if INCLUDE_ALL_GCS
 #include "gc_implementation/g1/heapRegionRemSet.hpp"
 #endif
+#include "memory/guardedMemory.hpp"
 #include "utilities/quickSort.hpp"
 #include "utilities/ostream.hpp"
 #if INCLUDE_VM_STRUCTS
@@ -5061,8 +5077,16 @@ void TestVirtualSpace_test();
 void TestMetaspaceAux_test();
 void TestMetachunk_test();
 void TestVirtualSpaceNode_test();
+void TestNewSize_test();
+void TestKlass_test();
+void Test_linked_list();
+void TestChunkedList_test();
 #if INCLUDE_ALL_GCS
+void TestOldFreeSpaceCalculation_test();
 void TestG1BiasedArray_test();
+void TestBufferingOopClosure_test();
+void TestCodeCacheRemSet_test();
+void FreeRegionList_test();
 #endif
 
 void execute_internal_vm_tests() {
@@ -5079,14 +5103,25 @@ void execute_internal_vm_tests() {
     run_unit_test(arrayOopDesc::test_max_array_length());
     run_unit_test(CollectedHeap::test_is_in());
     run_unit_test(QuickSort::test_quick_sort());
+    run_unit_test(GuardedMemory::test_guarded_memory());
     run_unit_test(AltHashing::test_alt_hash());
     run_unit_test(test_loggc_filename());
+    run_unit_test(TestNewSize_test());
+    run_unit_test(TestKlass_test());
+    run_unit_test(Test_linked_list());
+    run_unit_test(TestChunkedList_test());
 #if INCLUDE_VM_STRUCTS
     run_unit_test(VMStructs::test());
 #endif
 #if INCLUDE_ALL_GCS
+    run_unit_test(TestOldFreeSpaceCalculation_test());
     run_unit_test(TestG1BiasedArray_test());
     run_unit_test(HeapRegionRemSet::test_prt());
+    run_unit_test(TestBufferingOopClosure_test());
+    run_unit_test(TestCodeCacheRemSet_test());
+    if (UseG1GC) {
+      run_unit_test(FreeRegionList_test());
+    }
 #endif
     tty->print_cr("All internal VM tests passed");
   }
@@ -5185,7 +5220,7 @@ _JNI_IMPORT_OR_EXPORT_ jint JNICALL JNI_CreateJavaVM(JavaVM **vm, void **penv, v
     }
 
 #ifndef PRODUCT
-  #ifndef TARGET_OS_FAMILY_windows
+  #ifndef CALL_TEST_FUNC_WITH_WRAPPER_IF_NEEDED
     #define CALL_TEST_FUNC_WITH_WRAPPER_IF_NEEDED(f) f()
   #endif
 

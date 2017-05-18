@@ -184,11 +184,10 @@ class ParallelScavengeHeap : public CollectedHeap {
   void accumulate_statistics_all_tlabs();
   void resize_all_tlabs();
 
-  size_t unsafe_max_alloc();
-
   bool supports_tlab_allocation() const { return true; }
 
   size_t tlab_capacity(Thread* thr) const;
+  size_t tlab_used(Thread* thr) const;
   size_t unsafe_max_tlab_alloc(Thread* thr) const;
 
   // Can a compiler initialize a new object without store barriers?

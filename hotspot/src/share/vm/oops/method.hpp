@@ -156,6 +156,8 @@ class Method : public Metadata {
   void restore_vtable() { guarantee(is_method(), "vtable restored by this call"); }
   bool is_method() const volatile { return true; }
 
+  void restore_unshareable_info(TRAPS);
+
   // accessors for instance variables
 
   ConstMethod* constMethod() const             { return _constMethod; }
@@ -231,10 +233,11 @@ class Method : public Metadata {
   // Tracking number of breakpoints, for fullspeed debugging.
   // Only mutated by VM thread.
   u2   number_of_breakpoints()             const {
-    if (method_counters() == NULL) {
+    MethodCounters* mcs = method_counters();
+    if (mcs == NULL) {
       return 0;
     } else {
-      return method_counters()->number_of_breakpoints();
+      return mcs->number_of_breakpoints();
     }
   }
   void incr_number_of_breakpoints(TRAPS)         {
@@ -251,8 +254,9 @@ class Method : public Metadata {
   }
   // Initialization only
   void clear_number_of_breakpoints()             {
-    if (method_counters() != NULL) {
-      method_counters()->clear_number_of_breakpoints();
+    MethodCounters* mcs = method_counters();
+    if (mcs != NULL) {
+      mcs->clear_number_of_breakpoints();
     }
   }
 
@@ -299,10 +303,11 @@ class Method : public Metadata {
   }
 
   int  interpreter_throwout_count() const        {
-    if (method_counters() == NULL) {
+    MethodCounters* mcs = method_counters();
+    if (mcs == NULL) {
       return 0;
     } else {
-      return method_counters()->interpreter_throwout_count();
+      return mcs->interpreter_throwout_count();
     }
   }
 
@@ -350,16 +355,23 @@ class Method : public Metadata {
   }
 
   void set_method_data(MethodData* data)       {
-    _method_data = data;
+    // The store into method must be released. On platforms without
+    // total store order (TSO) the reference may become visible before
+    // the initialization of data otherwise.
+    OrderAccess::release_store_ptr((volatile void *)&_method_data, data);
   }
 
   MethodCounters* method_counters() const {
     return _method_counters;
   }
 
+  void clear_method_counters() {
+    _method_counters = NULL;
+  }
 
-  void set_method_counters(MethodCounters* counters) {
-    _method_counters = counters;
+  bool init_method_counters(MethodCounters* counters) {
+    // Try to install a pointer to MethodCounters, return true on success.
+    return Atomic::cmpxchg_ptr(counters, (volatile void*)&_method_counters, NULL) == NULL;
   }
 
 #ifdef TIERED
@@ -372,26 +384,28 @@ class Method : public Metadata {
       return method_counters()->interpreter_invocation_count();
     }
   }
-  void set_prev_event_count(int count, TRAPS)    {
-    MethodCounters* mcs = get_method_counters(CHECK);
+  void set_prev_event_count(int count) {
+    MethodCounters* mcs = method_counters();
     if (mcs != NULL) {
       mcs->set_interpreter_invocation_count(count);
     }
   }
   jlong prev_time() const                        {
-    return method_counters() == NULL ? 0 : method_counters()->prev_time();
+    MethodCounters* mcs = method_counters();
+    return mcs == NULL ? 0 : mcs->prev_time();
   }
-  void set_prev_time(jlong time, TRAPS)          {
-    MethodCounters* mcs = get_method_counters(CHECK);
+  void set_prev_time(jlong time) {
+    MethodCounters* mcs = method_counters();
     if (mcs != NULL) {
       mcs->set_prev_time(time);
     }
   }
   float rate() const                             {
-    return method_counters() == NULL ? 0 : method_counters()->rate();
+    MethodCounters* mcs = method_counters();
+    return mcs == NULL ? 0 : mcs->rate();
   }
-  void set_rate(float rate, TRAPS) {
-    MethodCounters* mcs = get_method_counters(CHECK);
+  void set_rate(float rate) {
+    MethodCounters* mcs = method_counters();
     if (mcs != NULL) {
       mcs->set_rate(rate);
     }
@@ -409,9 +423,12 @@ class Method : public Metadata {
   static MethodCounters* build_method_counters(Method* m, TRAPS);
 
   int interpreter_invocation_count() {
-    if (TieredCompilation) return invocation_count();
-    else return (method_counters() == NULL) ? 0 :
-                 method_counters()->interpreter_invocation_count();
+    if (TieredCompilation) {
+      return invocation_count();
+    } else {
+      MethodCounters* mcs = method_counters();
+      return (mcs == NULL) ? 0 : mcs->interpreter_invocation_count();
+    }
   }
   int increment_interpreter_invocation_count(TRAPS) {
     if (TieredCompilation) ShouldNotReachHere();
@@ -602,6 +619,9 @@ class Method : public Metadata {
   // returns true if the method is an accessor function (setter/getter).
   bool is_accessor() const;
 
+  // returns true if the method does nothing but return a constant of primitive type
+  bool is_constant_getter() const;
+
   // returns true if the method is an initializer (<init> or <clinit>).
   bool is_initializer() const;
 
@@ -776,6 +796,10 @@ class Method : public Metadata {
    return method_holder()->lookup_osr_nmethod(this, InvocationEntryBci, level, match_level) != NULL;
   }
 
+  int mark_osr_nmethods() {
+    return method_holder()->mark_osr_nmethods(this);
+  }
+
   nmethod* lookup_osr_nmethod_for(int bci, int level, bool match_level) {
     return method_holder()->lookup_osr_nmethod(this, bci, level, match_level);
   }
@@ -861,6 +885,7 @@ class Method : public Metadata {
   const char* internal_name() const { return "{method}"; }
 
   // Check for valid method pointer
+  static bool has_method_vptr(const void* ptr);
   bool is_valid_method() const;
 
   // Verify

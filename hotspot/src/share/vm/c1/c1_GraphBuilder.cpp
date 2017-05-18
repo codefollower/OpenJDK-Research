@@ -1569,6 +1569,7 @@ void GraphBuilder::access_field(Bytecodes::Code code) {
         default:
           constant = new Constant(as_ValueType(field_val));
         }
+        // Stable static fields are checked for non-default values in ciField::initialize_from().
       }
       if (constant != NULL) {
         push(type, append(constant));
@@ -1609,6 +1610,10 @@ void GraphBuilder::access_field(Bytecodes::Code code) {
               break;
             default:
               constant = new Constant(as_ValueType(field_val));
+            }
+            if (FoldStableValues && field->is_stable() && field_val.is_null_or_zero()) {
+              // Stable field with default value can't be constant.
+              constant = NULL;
             }
           } else {
             // For CallSite objects treat the target field as a compile time constant.
@@ -1697,6 +1702,15 @@ Values* GraphBuilder::args_list_for_profiling(ciMethod* target, int& start, bool
   return NULL;
 }
 
+void GraphBuilder::check_args_for_profiling(Values* obj_args, int expected) {
+#ifdef ASSERT
+  bool ignored_will_link;
+  ciSignature* declared_signature = NULL;
+  ciMethod* real_target = method()->get_method_at_bci(bci(), ignored_will_link, &declared_signature);
+  assert(expected == obj_args->length() || real_target->is_method_handle_intrinsic(), "missed on arg?");
+#endif
+}
+
 // Collect arguments that we want to profile in a list
 Values* GraphBuilder::collect_args_for_profiling(Values* args, ciMethod* target, bool may_have_receiver) {
   int start = 0;
@@ -1705,13 +1719,14 @@ Values* GraphBuilder::collect_args_for_profiling(Values* args, ciMethod* target,
     return NULL;
   }
   int s = obj_args->size();
-  for (int i = start, j = 0; j < s; i++) {
+  // if called through method handle invoke, some arguments may have been popped
+  for (int i = start, j = 0; j < s && i < args->length(); i++) {
     if (args->at(i)->type()->is_object_kind()) {
       obj_args->push(args->at(i));
       j++;
     }
   }
-  assert(s == obj_args->length(), "missed on arg?");
+  check_args_for_profiling(obj_args, s);
   return obj_args;
 }
 
@@ -1983,7 +1998,13 @@ void GraphBuilder::invoke(Bytecodes::Code code) {
   if (!UseInlineCaches && is_loaded && code == Bytecodes::_invokevirtual
       && !target->can_be_statically_bound()) {
     // Find a vtable index if one is available
-    vtable_index = target->resolve_vtable_index(calling_klass, callee_holder);
+    // For arrays, callee_holder is Object. Resolving the call with
+    // Object would allow an illegal call to finalize() on an
+    // array. We use holder instead: illegal calls to finalize() won't
+    // be compiled as vtable calls (IC call resolution will catch the
+    // illegal call) and the few legal calls on array types won't be
+    // either.
+    vtable_index = target->resolve_vtable_index(calling_klass, holder);
   }
 #endif
 
@@ -2040,7 +2061,7 @@ void GraphBuilder::new_instance(int klass_index) {
   bool will_link;
   ciKlass* klass = stream()->get_klass(will_link);
   assert(klass->is_instance_klass(), "must be an instance klass");
-  NewInstance* new_instance = new NewInstance(klass->as_instance_klass(), state_before);
+  NewInstance* new_instance = new NewInstance(klass->as_instance_klass(), state_before, stream()->is_unresolved_klass());
   _memory->new_instance(new_instance);
   apush(append_split(new_instance));
 }
@@ -3767,11 +3788,14 @@ bool GraphBuilder::try_inline_full(ciMethod* callee, bool holder_known, Bytecode
   }
 
   // now perform tests that are based on flag settings
-  if (callee->force_inline()) {
-    if (inline_level() > MaxForceInlineLevel) INLINE_BAILOUT("MaxForceInlineLevel");
-    print_inlining(callee, "force inline by annotation");
-  } else if (callee->should_inline()) {
-    print_inlining(callee, "force inline by CompileOracle");
+  if (callee->force_inline() || callee->should_inline()) {
+    if (inline_level() > MaxForceInlineLevel                    ) INLINE_BAILOUT("MaxForceInlineLevel");
+    if (recursive_inline_level(callee) > MaxRecursiveInlineLevel) INLINE_BAILOUT("recursive inlining too deep");
+
+    const char* msg = "";
+    if (callee->force_inline())  msg = "force inline by annotation";
+    if (callee->should_inline()) msg = "force inline by CompileOracle";
+    print_inlining(callee, msg);
   } else {
     // use heuristic controls on inlining
     if (inline_level() > MaxInlineLevel                         ) INLINE_BAILOUT("inlining too deep");
@@ -3840,14 +3864,7 @@ bool GraphBuilder::try_inline_full(ciMethod* callee, bool holder_known, Bytecode
             j++;
           }
         }
-#ifdef ASSERT
-        {
-          bool ignored_will_link;
-          ciSignature* declared_signature = NULL;
-          ciMethod* real_target = method()->get_method_at_bci(bci(), ignored_will_link, &declared_signature);
-          assert(s == obj_args->length() || real_target->is_method_handle_intrinsic(), "missed on arg?");
-        }
-#endif
+        check_args_for_profiling(obj_args, s);
       }
       profile_call(callee, recv, holder_known ? callee->holder() : NULL, obj_args, true);
     }
@@ -3943,9 +3960,14 @@ bool GraphBuilder::try_inline_full(ciMethod* callee, bool holder_known, Bytecode
   // Clear out bytecode stream
   scope_data()->set_stream(NULL);
 
+  CompileLog* log = compilation()->log();
+  if (log != NULL) log->head("parse method='%d'", log->identify(callee));
+
   // Ready to resume parsing in callee (either in the same block we
   // were in before or in the callee's start block)
   iterate_all_blocks(callee_start_block == NULL);
+
+  if (log != NULL) log->done("parse");
 
   // If we bailed out during parsing, return immediately (this is bad news)
   if (bailed_out())
@@ -4338,11 +4360,15 @@ void GraphBuilder::print_stats() {
 #endif // PRODUCT
 
 void GraphBuilder::profile_call(ciMethod* callee, Value recv, ciKlass* known_holder, Values* obj_args, bool inlined) {
-  // A default method's holder is an interface
-  if (known_holder != NULL && known_holder->is_interface()) {
-    assert(known_holder->is_instance_klass() && ((ciInstanceKlass*)known_holder)->has_default_methods(), "should be default method");
-    known_holder = NULL;
+  assert(known_holder == NULL || (known_holder->is_instance_klass() &&
+                                  (!known_holder->is_interface() ||
+                                   ((ciInstanceKlass*)known_holder)->has_default_methods())), "should be default method");
+  if (known_holder != NULL) {
+    if (known_holder->exact_klass() == NULL) {
+      known_holder = compilation()->cha_exact_type(known_holder);
+    }
   }
+
   append(new ProfileCall(method(), bci(), callee, recv, known_holder, obj_args, inlined));
 }
 

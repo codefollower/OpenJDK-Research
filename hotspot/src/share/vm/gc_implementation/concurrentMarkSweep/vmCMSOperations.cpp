@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2005, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2005, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -34,6 +34,7 @@
 #include "runtime/os.hpp"
 #include "utilities/dtrace.hpp"
 
+PRAGMA_FORMAT_MUTE_WARNINGS_FOR_GCC
 
 #ifndef USDT2
 HS_DTRACE_PROBE_DECL(hs_private, cms__initmark__begin);
@@ -49,8 +50,12 @@ HS_DTRACE_PROBE_DECL(hs_private, cms__remark__end);
 void VM_CMS_Operation::acquire_pending_list_lock() {
   // The caller may block while communicating
   // with the SLT thread in order to acquire/release the PLL.
-  ConcurrentMarkSweepThread::slt()->
-    manipulatePLL(SurrogateLockerThread::acquirePLL);
+  SurrogateLockerThread* slt = ConcurrentMarkSweepThread::slt();
+  if (slt != NULL) {
+    slt->manipulatePLL(SurrogateLockerThread::acquirePLL);
+  } else {
+    SurrogateLockerThread::report_missing_slt();
+  }
 }
 
 void VM_CMS_Operation::release_and_notify_pending_list_lock() {
@@ -63,7 +68,7 @@ void VM_CMS_Operation::release_and_notify_pending_list_lock() {
 void VM_CMS_Operation::verify_before_gc() {
   if (VerifyBeforeGC &&
       GenCollectedHeap::heap()->total_collections() >= VerifyGCStartAt) {
-    GCTraceTime tm("Verify Before", false, false, _collector->_gc_timer_cm);
+    GCTraceTime tm("Verify Before", false, false, _collector->_gc_timer_cm, _collector->_gc_tracer_cm->gc_id());
     HandleMark hm;
     FreelistLocker x(_collector);
     MutexLockerEx  y(_collector->bitMapLock(), Mutex::_no_safepoint_check_flag);
@@ -75,7 +80,7 @@ void VM_CMS_Operation::verify_before_gc() {
 void VM_CMS_Operation::verify_after_gc() {
   if (VerifyAfterGC &&
       GenCollectedHeap::heap()->total_collections() >= VerifyGCStartAt) {
-    GCTraceTime tm("Verify After", false, false, _collector->_gc_timer_cm);
+    GCTraceTime tm("Verify After", false, false, _collector->_gc_timer_cm, _collector->_gc_tracer_cm->gc_id());
     HandleMark hm;
     FreelistLocker x(_collector);
     MutexLockerEx  y(_collector->bitMapLock(), Mutex::_no_safepoint_check_flag);

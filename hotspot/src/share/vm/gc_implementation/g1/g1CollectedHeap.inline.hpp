@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001, 2013, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2001, 2014, Oracle and/or its affiliates. All rights reserved.
  * DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.
  *
  * This code is free software; you can redistribute it and/or modify it
@@ -30,47 +30,84 @@
 #include "gc_implementation/g1/g1AllocRegion.inline.hpp"
 #include "gc_implementation/g1/g1CollectorPolicy.hpp"
 #include "gc_implementation/g1/g1SATBCardTableModRefBS.hpp"
-#include "gc_implementation/g1/heapRegionSeq.inline.hpp"
+#include "gc_implementation/g1/heapRegionManager.inline.hpp"
+#include "gc_implementation/g1/heapRegionSet.inline.hpp"
+#include "runtime/orderAccess.inline.hpp"
 #include "utilities/taskqueue.hpp"
 
 // Inline functions for G1CollectedHeap
 
+inline AllocationContextStats& G1CollectedHeap::allocation_context_stats() {
+  return _allocation_context_stats;
+}
+
+// Return the region with the given index. It assumes the index is valid.
+inline HeapRegion* G1CollectedHeap::region_at(uint index) const { return _hrm.at(index); }
+
+inline uint G1CollectedHeap::addr_to_region(HeapWord* addr) const {
+  assert(is_in_reserved(addr),
+         err_msg("Cannot calculate region index for address "PTR_FORMAT" that is outside of the heap ["PTR_FORMAT", "PTR_FORMAT")",
+                 p2i(addr), p2i(_reserved.start()), p2i(_reserved.end())));
+  return (uint)(pointer_delta(addr, _reserved.start(), sizeof(uint8_t)) >> HeapRegion::LogOfHRGrainBytes);
+}
+
+inline HeapWord* G1CollectedHeap::bottom_addr_for_region(uint index) const {
+  return _hrm.reserved().start() + index * HeapRegion::GrainWords;
+}
+
 template <class T>
-inline HeapRegion*
-G1CollectedHeap::heap_region_containing(const T addr) const {
-  HeapRegion* hr = _hrs.addr_to_region((HeapWord*) addr);
-  // hr can be null if addr in perm_gen
-  if (hr != NULL && hr->continuesHumongous()) {
-    hr = hr->humongous_start_region();
+inline HeapRegion* G1CollectedHeap::heap_region_containing_raw(const T addr) const {
+  assert(addr != NULL, "invariant");
+  assert(is_in_g1_reserved((const void*) addr),
+      err_msg("Address "PTR_FORMAT" is outside of the heap ranging from ["PTR_FORMAT" to "PTR_FORMAT")",
+          p2i((void*)addr), p2i(g1_reserved().start()), p2i(g1_reserved().end())));
+  return _hrm.addr_to_region((HeapWord*) addr);
+}
+
+template <class T>
+inline HeapRegion* G1CollectedHeap::heap_region_containing(const T addr) const {
+  HeapRegion* hr = heap_region_containing_raw(addr);
+  if (hr->continuesHumongous()) {
+    return hr->humongous_start_region();
   }
   return hr;
 }
 
-template <class T>
-inline HeapRegion*
-G1CollectedHeap::heap_region_containing_raw(const T addr) const {
-  assert(_g1_reserved.contains((const void*) addr), "invariant");
-  HeapRegion* res = _hrs.addr_to_region_unsafe((HeapWord*) addr);
-  return res;
+inline void G1CollectedHeap::reset_gc_time_stamp() {
+  _gc_time_stamp = 0;
+  OrderAccess::fence();
+  // Clear the cached CSet starting regions and time stamps.
+  // Their validity is dependent on the GC timestamp.
+  clear_cset_start_regions();
+}
+
+inline void G1CollectedHeap::increment_gc_time_stamp() {
+  ++_gc_time_stamp;
+  OrderAccess::fence();
+}
+
+inline void G1CollectedHeap::old_set_remove(HeapRegion* hr) {
+  _old_set.remove(hr);
 }
 
 inline bool G1CollectedHeap::obj_in_cs(oop obj) {
-  HeapRegion* r = _hrs.addr_to_region((HeapWord*) obj);
+  HeapRegion* r = _hrm.addr_to_region((HeapWord*) obj);
   return r != NULL && r->in_collection_set();
 }
 
-inline HeapWord*
-G1CollectedHeap::attempt_allocation(size_t word_size,
-                                    unsigned int* gc_count_before_ret,
-                                    int* gclocker_retry_count_ret) {
+inline HeapWord* G1CollectedHeap::attempt_allocation(size_t word_size,
+                                                     unsigned int* gc_count_before_ret,
+                                                     int* gclocker_retry_count_ret) {
   assert_heap_not_locked_and_not_at_safepoint();
   assert(!isHumongous(word_size), "attempt_allocation() should not "
          "be called for humongous allocation requests");
 
-  HeapWord* result = _mutator_alloc_region.attempt_allocation(word_size,
-                                                      false /* bot_updates */);
+  AllocationContext_t context = AllocationContext::current();
+  HeapWord* result = _allocator->mutator_alloc_region(context)->attempt_allocation(word_size,
+                                                                                   false /* bot_updates */);
   if (result == NULL) {
     result = attempt_allocation_slow(word_size,
+                                     context,
                                      gc_count_before_ret,
                                      gclocker_retry_count_ret);
   }
@@ -81,17 +118,17 @@ G1CollectedHeap::attempt_allocation(size_t word_size,
   return result;
 }
 
-inline HeapWord* G1CollectedHeap::survivor_attempt_allocation(size_t
-                                                              word_size) {
+inline HeapWord* G1CollectedHeap::survivor_attempt_allocation(size_t word_size,
+                                                              AllocationContext_t context) {
   assert(!isHumongous(word_size),
          "we should not be seeing humongous-size allocations in this path");
 
-  HeapWord* result = _survivor_gc_alloc_region.attempt_allocation(word_size,
-                                                      false /* bot_updates */);
+  HeapWord* result = _allocator->survivor_gc_alloc_region(context)->attempt_allocation(word_size,
+                                                                                       false /* bot_updates */);
   if (result == NULL) {
     MutexLockerEx x(FreeList_lock, Mutex::_no_safepoint_check_flag);
-    result = _survivor_gc_alloc_region.attempt_allocation_locked(word_size,
-                                                      false /* bot_updates */);
+    result = _allocator->survivor_gc_alloc_region(context)->attempt_allocation_locked(word_size,
+                                                                                      false /* bot_updates */);
   }
   if (result != NULL) {
     dirty_young_block(result, word_size);
@@ -99,16 +136,17 @@ inline HeapWord* G1CollectedHeap::survivor_attempt_allocation(size_t
   return result;
 }
 
-inline HeapWord* G1CollectedHeap::old_attempt_allocation(size_t word_size) {
+inline HeapWord* G1CollectedHeap::old_attempt_allocation(size_t word_size,
+                                                         AllocationContext_t context) {
   assert(!isHumongous(word_size),
          "we should not be seeing humongous-size allocations in this path");
 
-  HeapWord* result = _old_gc_alloc_region.attempt_allocation(word_size,
-                                                       true /* bot_updates */);
+  HeapWord* result = _allocator->old_gc_alloc_region(context)->attempt_allocation(word_size,
+                                                                                  true /* bot_updates */);
   if (result == NULL) {
     MutexLockerEx x(FreeList_lock, Mutex::_no_safepoint_check_flag);
-    result = _old_gc_alloc_region.attempt_allocation_locked(word_size,
-                                                       true /* bot_updates */);
+    result = _allocator->old_gc_alloc_region(context)->attempt_allocation_locked(word_size,
+                                                                                 true /* bot_updates */);
   }
   return result;
 }
@@ -125,8 +163,7 @@ G1CollectedHeap::dirty_young_block(HeapWord* start, size_t word_size) {
   // have to keep calling heap_region_containing_raw() in the
   // asserts below.
   DEBUG_ONLY(HeapRegion* containing_hr = heap_region_containing_raw(start);)
-  assert(containing_hr != NULL && start != NULL && word_size > 0,
-         "pre-condition");
+  assert(word_size > 0, "pre-condition");
   assert(containing_hr->is_in(start), "it should contain start");
   assert(containing_hr->is_young(), "it should be young");
   assert(!containing_hr->isHumongous(), "it should not be humongous");
@@ -148,6 +185,30 @@ inline bool G1CollectedHeap::isMarkedPrev(oop obj) const {
 
 inline bool G1CollectedHeap::isMarkedNext(oop obj) const {
   return _cm->nextMarkBitMap()->isMarked((HeapWord *)obj);
+}
+
+// This is a fast test on whether a reference points into the
+// collection set or not. Assume that the reference
+// points into the heap.
+inline bool G1CollectedHeap::is_in_cset(oop obj) {
+  bool ret = _in_cset_fast_test.is_in_cset((HeapWord*)obj);
+  // let's make sure the result is consistent with what the slower
+  // test returns
+  assert( ret || !obj_in_cs(obj), "sanity");
+  assert(!ret ||  obj_in_cs(obj), "sanity");
+  return ret;
+}
+
+bool G1CollectedHeap::is_in_cset_or_humongous(const oop obj) {
+  return _in_cset_fast_test.is_in_cset_or_humongous((HeapWord*)obj);
+}
+
+G1CollectedHeap::in_cset_state_t G1CollectedHeap::in_cset_state(const oop obj) {
+  return _in_cset_fast_test.at((HeapWord*)obj);
+}
+
+void G1CollectedHeap::register_humongous_region_with_in_cset_fast_test(uint index) {
+  _in_cset_fast_test.set_humongous(index);
 }
 
 #ifndef PRODUCT
@@ -199,8 +260,7 @@ G1CollectedHeap::set_evacuation_failure_alot_for_current_gc() {
   }
 }
 
-inline bool
-G1CollectedHeap::evacuation_should_fail() {
+inline bool G1CollectedHeap::evacuation_should_fail() {
   if (!G1EvacuationFailureALot || !_evacuation_failure_alot_for_current_gc) {
     return false;
   }
@@ -222,5 +282,53 @@ inline void G1CollectedHeap::reset_evacuation_should_fail() {
   }
 }
 #endif  // #ifndef PRODUCT
+
+inline bool G1CollectedHeap::is_in_young(const oop obj) {
+  if (obj == NULL) {
+    return false;
+  }
+  return heap_region_containing(obj)->is_young();
+}
+
+// We don't need barriers for initializing stores to objects
+// in the young gen: for the SATB pre-barrier, there is no
+// pre-value that needs to be remembered; for the remembered-set
+// update logging post-barrier, we don't maintain remembered set
+// information for young gen objects.
+inline bool G1CollectedHeap::can_elide_initializing_store_barrier(oop new_obj) {
+  return is_in_young(new_obj);
+}
+
+inline bool G1CollectedHeap::is_obj_dead(const oop obj) const {
+  if (obj == NULL) {
+    return false;
+  }
+  return is_obj_dead(obj, heap_region_containing(obj));
+}
+
+inline bool G1CollectedHeap::is_obj_ill(const oop obj) const {
+  if (obj == NULL) {
+    return false;
+  }
+  return is_obj_ill(obj, heap_region_containing(obj));
+}
+
+inline void G1CollectedHeap::set_humongous_is_live(oop obj) {
+  uint region = addr_to_region((HeapWord*)obj);
+  // We not only set the "live" flag in the humongous_is_live table, but also
+  // reset the entry in the _in_cset_fast_test table so that subsequent references
+  // to the same humongous object do not go into the slow path again.
+  // This is racy, as multiple threads may at the same time enter here, but this
+  // is benign.
+  // During collection we only ever set the "live" flag, and only ever clear the
+  // entry in the in_cset_fast_table.
+  // We only ever evaluate the contents of these tables (in the VM thread) after
+  // having synchronized the worker threads with the VM thread, or in the same
+  // thread (i.e. within the VM thread).
+  if (!_humongous_is_live.is_live(region)) {
+    _humongous_is_live.set_live(region);
+    _in_cset_fast_test.clear_humongous(region);
+  }
+}
 
 #endif // SHARE_VM_GC_IMPLEMENTATION_G1_G1COLLECTEDHEAP_INLINE_HPP
