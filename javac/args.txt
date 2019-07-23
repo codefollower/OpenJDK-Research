@@ -16,8 +16,8 @@
 #-Xlint:deprecation,path
 #-Xlint:path
 -Xlint
--classpath .;src;target\javac_classes
-
+-classpath .;src;target\javac_classes;my-test;
+-doe
 
 #-source 1.4
 #-target 1.4
@@ -218,4 +218,5 @@
 #my-test/my/test/ScannerTest.java
 
 
- my-test/my/test/Test.java
+#my-test/my/test/Test.java
+my-test/test/d/DAGExecutionEvent.java
